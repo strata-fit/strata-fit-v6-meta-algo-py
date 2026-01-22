@@ -27,3 +27,9 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 include = ["strata_fit_v6_meta_algo_py*"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning:dateutil.tz",
+    "ignore::DeprecationWarning:sqlalchemy.sql.sqltypes",
+]
