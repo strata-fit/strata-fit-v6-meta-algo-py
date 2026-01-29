@@ -1,0 +1,17 @@
+[meta_generic]
+image = "host.docker.internal:5001/strata-fit-v6-meta-algo:latest"
+name = "demo-meta-generic"
+description = "STRATA-FIT meta algorithm: validation -> imputation -> federated LR"
+organizations = [3]
+collaboration = 1
+databases = [{ label = "default" }]
+[meta_generic.input]
+method = "main"
+[meta_generic.input.kwargs]
+columns = ["DAS28", "CRP", "HAQ", "Pat_global", "Pain"]
+predictors = ["Age_diagnosis", "DAS28", "CRP", "HAQ"]
+outcome = "RF_positivity"
+n_local_iterations = 50
+run_validation = true
+imputation_strategy = "MEAN_IMPUTER"
+org_ids = [3]

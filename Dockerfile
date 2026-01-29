@@ -1,8 +1,8 @@
 # Basic python3 image as base
-FROM harbor2.vantage6.ai/infrastructure/algorithm-base:4.2
+FROM harbor2.vantage6.ai/infrastructure/algorithm-base:4.13
 
 # Algorithm package name (as in setup.py)
-ARG PKG_NAME="v6_logistic_regression_py"
+ARG PKG_NAME="strata_fit_v6_meta_algo_py"
 
 # List of extra git-based packages, space-separated
 # Example at build:
@@ -21,6 +21,12 @@ COPY . /app
 
 # Install extra algorithm packages via Makefile
 RUN make install-algo-packages
+
+# Core STRATA-FIT dependencies needed by the meta algorithm (pinned to commits)
+RUN pip install \
+    git+https://github.com/strata-fit/strata-fit-data-schema.git@63ecfde03d8a0b80d1d39337e89f3f8b90b7b1cb \
+    #git+https://github.com/strata-fit/strata-fit-v6-imputation-py.git@bc42bb4c578d415e600c50eeae8c4f6cbe173934 \
+    git+https://github.com/strata-fit/strata-fit-v6-logistic-regression-py.git@53c3d0ab418fc09fed11ac79c3a19abe3ef01d70
 
 # Install this algorithm package
 RUN pip install /app
