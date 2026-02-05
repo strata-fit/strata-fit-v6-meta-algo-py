@@ -37,6 +37,9 @@ This repository provides a demo setup for running a [vantage6](https://vantage6.
 - Data for the meta algorithm lives in `infrastructure/data/meta` and follows the `PatientData` schema from `strata-fit-data-schema`. Missing values are present in `DAS28`, `CRP`, and `HAQ` for the gamma site to exercise imputation.
 - Build the meta image from the repo root (push/tag as needed for your registry). The Dockerfile already installs pinned GitHub commits of `strata_fit_v6_data_validator_py`, `strata_fit_v6_imputation_py`, and `v6_logistic_regression_py`:
   - `docker build -t strata-fit-v6-meta-algo:latest -f Dockerfile .`
+  - (for local) `docker tag strata-fit-v6-meta-algo:latest host.docker.internal:5001/strata-fit-v6-meta-algo:latest`
+  - (for local) `docker push host.docker.internal:5001/strata-fit-v6-meta-algo:latest`
+  - (check successful move for local) `curl -s http://localhost:5001/v2/_catalog | jq `
 - A preset is available in `algorithms/settings/algorithms.toml` under `[meta_generic]`.
 - Run the preset once the demo infrastructure is up:
   - `ALGORITHM=meta_generic python v6-infra/algorithms/run.py`

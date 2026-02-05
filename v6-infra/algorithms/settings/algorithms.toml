@@ -13,5 +13,5 @@ predictors = ["Age_diagnosis", "DAS28", "CRP", "HAQ"]
 outcome = "RF_positivity"
 n_local_iterations = 50
 run_validation = true
-imputation_strategy = "MEAN_IMPUTER"
-org_ids = [3]
+imputation_strategy = "mean_imputer"
+organizations = [3]

@@ -85,6 +85,8 @@ def imputation_compute_partial(
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER,
 ) -> Dict:
     """Compute node-level imputation metrics."""
+    info(f"Available strategies: {STRATEGY_REGISTRY.keys()}")
+    info(f"Using strategy: {imputation_strategy}")
     imputer_cls = STRATEGY_REGISTRY[imputation_strategy]
     imputer = imputer_cls()
     return imputer.compute(df, columns).to_dict()
