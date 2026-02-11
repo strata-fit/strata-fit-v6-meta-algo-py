@@ -24,9 +24,9 @@ RUN make install-algo-packages
 
 # Core STRATA-FIT dependencies needed by the meta algorithm (pinned to commits)
 RUN pip install \
-    git+https://github.com/strata-fit/strata-fit-data-schema.git@63ecfde03d8a0b80d1d39337e89f3f8b90b7b1cb \
-    #git+https://github.com/strata-fit/strata-fit-v6-imputation-py.git@bc42bb4c578d415e600c50eeae8c4f6cbe173934 \
-    git+https://github.com/strata-fit/strata-fit-v6-logistic-regression-py.git@53c3d0ab418fc09fed11ac79c3a19abe3ef01d70
+    git+https://github.com/strata-fit/strata-fit-data-schema.git@53529a81518c43a57701a0c37c457af21018f8d5 \
+    git+https://github.com/strata-fit/strata-fit-v6-imputation-py.git@0dc00d97aff9d6394d1accbc247a44e081168003 \
+    git+https://github.com/strata-fit/strata-fit-v6-logistic-regression-py.git@b2d1b3597ea8cdf84763f86d88c382e3d352e14d
 
 # Install this algorithm package
 RUN pip install /app
