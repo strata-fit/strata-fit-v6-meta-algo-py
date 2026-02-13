@@ -1,5 +1,10 @@
+from unittest import result
 import pandas as pd
 from pydantic import BaseModel
+import numpy as np
+
+def sigmoid(z):
+    return 1 / (1 + np.exp(-z))
 
 from strata_fit_v6_meta_algo_py.central import run_pipeline
 from strata_fit_v6_meta_algo_py.partial import impute_locally
@@ -53,6 +58,14 @@ def test_logistic_partial_training():
     assert "coef_" in result["model_attributes"]
     assert result["size"] == 4
 
+    coef = np.array(result["model_attributes"]["coef_"][0], dtype=float)
+    intercept = float(result["model_attributes"]["intercept_"][0])
+
+    X = df[["f1", "f2"]].to_numpy(dtype=float)
+    probs = sigmoid(intercept + X @ coef)
+
+    assert len(probs) == len(df)
+    assert (probs >= 0).all() and (probs <= 1).all()
 
 def test_validator_simple_model():
     class RowModel(BaseModel):
@@ -74,16 +87,28 @@ def test_meta_run_pipeline():
             "y": [0, 1, 0, 1],
         }
     )
-
-    result = run_pipeline(
-        df,
-        imputation_columns=["x"],
-        predictors=["x"],
-        outcome="y",
-        n_local_iterations=30,
-    )
-
+    assert "km_pooled" in result
+    assert "pooled_km_event_table" in result["km_pooled"]
+    assert len(result["km_pooled"]["pooled_km_event_table"]) > 0
     assert "imputation_metrics" in result
     assert "lr_model_attributes" in result
     # ensure imputation then training used all rows
     assert result["training_size"] == 4
+
+print("imputation_metrics:", result["imputation_metrics"])
+print("lr_model_attributes:", result["lr_model_attributes"])
+print("km rows:", len(result["km_pooled"]["pooled_km_event_table"]))
+
+
+
+tbl = pd.DataFrame(result["km_pooled"]["pooled_km_event_table"])
+tbl = tbl.sort_values("interval_start")
+
+n = tbl["at_risk"].astype(float).to_numpy()
+d = tbl["observed"].astype(float).to_numpy()
+
+haz = np.where(n > 0, d / n, 0.0)
+S = np.cumprod(1 - haz)
+
+km_curve = pd.DataFrame({"t": tbl["interval_start"], "S": S})
+print(km_curve.head(20))

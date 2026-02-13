@@ -18,35 +18,42 @@ def _ensure_validator_config_path():
 
 def build_client():
     _ensure_validator_config_path()
-    data_dir = Path("v6-infra/infrastructure/data/meta")
+    data_path = Path("/Users/cripepi2/Documents/data_11022026.csv")
     datasets = [
-        [{"database": data_dir / "alpha.csv", "db_type": "csv"}],
-        [{"database": data_dir / "beta.csv", "db_type": "csv"}],
-        [{"database": data_dir / "gamma.csv", "db_type": "csv"}],
+        [{"database": data_path, "db_type": "csv"}],
     ]
+
     return MockAlgorithmClient(
         datasets=datasets, module="strata_fit_v6_meta_algo_py.central"
     )
 
-
 def test_meta_algorithm_end_to_end():
     client = build_client()
     org_ids = [o["id"] for o in client.organization.list()]
+    assert len(org_ids) == 1, f"Expected 1 org, got {len(org_ids)}"
 
+    # IMPORTANT: call the CENTRAL entrypoint
     task = client.task.create(
         input_={
             "master": True,
             "method": "main",
             "kwargs": {
-                "columns": ["DAS28", "CRP", "HAQ", "Pat_global", "Pain"],
-                "predictors": ["Age_diagnosis", "DAS28", "CRP", "HAQ"],
-                "outcome": "RF_positivity",
+                "columns": ["DAS28", "CRP", "Pat_global", "Pain"],
+                "predictors": ["Year_diagnosis",  "cum_btsDMARDmin"],
+                "outcome": "D2T_RA_Ever", ## Still LR label for testing; KM will use D2T-event columns
                 "n_local_iterations": 30,
                 "run_validation": True,
                 "organizations": org_ids,
+
+                # NEW: KM ON
+                "run_km": True,
+                # optional noise params; omit or leave None if you want defaults
+                "km_noise_type": None,
+                "km_snr": None,
+                "km_random_seed": None,
             },
         },
-        organizations=[org_ids[0]],
+        organizations=org_ids,
     )
 
     result = client.result.get(task["id"])
@@ -61,6 +68,11 @@ def test_meta_algorithm_end_to_end():
     # Ensure each partial trained on some rows (imputation should remove NaNs in predictors)
     for partial in result["lr_partials"]:
         assert partial.get("size", 0) > 0
+
+    assert "km_pooled" in result, "Missing pooled KM output"
+    assert "meta_outcome_d2t_events" in result, "Missing meta D2T outcome"
+    assert result["meta_outcome_d2t_events"] is not None, "D2T outcome is None"
+
 
 if __name__ == "__main__":
     test_meta_algorithm_end_to_end()
