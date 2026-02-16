@@ -4,6 +4,7 @@ Meta-algorithm partials exposed to Vantage6 and helper functions for local tests
 from typing import Any, Dict, List, Optional
 import pandas as pd
 from vantage6.algorithm.tools.decorators import data
+from vantage6.common import info
 
 from strata_fit_v6_imputation_py.imputation_strategies.base import (
     ImputationStrategyEnum,
@@ -19,6 +20,21 @@ from strata_fit_v6_km_py.types import DEFAULT_INTERVAL_START_COLUMN, DEFAULT_INT
 from strata_fit_v6_km_py.types import DEFAULT_EVENT_INDICATOR_COLUMN
 
 
+def _coerce_strategy(strategy: Any) -> ImputationStrategyEnum:
+    """Normalize strategy from enum or string (name or value, case-insensitive)."""
+    if isinstance(strategy, ImputationStrategyEnum):
+        return strategy
+    if isinstance(strategy, str):
+        candidate = strategy.strip()
+        # direct by name or value (case-insensitive)
+        for member in ImputationStrategyEnum:
+            if candidate == member.value or candidate == member.name:
+                return member
+            if candidate.lower() == member.value.lower() or candidate.lower() == member.name.lower():
+                return member
+    raise ValueError(f"Unsupported imputation strategy: {strategy}")
+
+
 # ---------- Helper (undecorated) ----------
 def impute_locally(
     df: pd.DataFrame,
@@ -26,7 +42,8 @@ def impute_locally(
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER,
 ) -> pd.DataFrame:
     """Apply global metrics to a local dataframe using the chosen strategy."""
-    imputer_cls = STRATEGY_REGISTRY[imputation_strategy]
+    strategy = _coerce_strategy(imputation_strategy)
+    imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
     return imputer.impute(df, global_metrics)
 
@@ -45,11 +62,13 @@ def _impute_and_train_lr_core(
     km_random_seed: Optional[int] = None,
     **model_kwargs,
 ) -> Dict[str, Any]:
+
     # 1) Impute
+    strategy = _coerce_strategy(imputation_strategy)
     imputed = impute_locally(
         df,
         global_metrics,
-        imputation_strategy=imputation_strategy,
+        imputation_strategy=strategy,
     )
     km_summary = strata_fit_data_to_km_input(imputed)
     # 2) Optional KM
@@ -185,7 +204,10 @@ def imputation_compute_partial(
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER,
 ) -> Dict:
     """Compute node-level imputation metrics."""
-    imputer_cls = STRATEGY_REGISTRY[imputation_strategy]
+    strategy = _coerce_strategy(imputation_strategy)
+    info(f"Available strategies: {STRATEGY_REGISTRY.keys()}")
+    info(f"Using strategy: {strategy}")
+    imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
     return imputer.compute(df, columns).to_dict()
 
@@ -209,13 +231,14 @@ def impute_and_train_lr(
     Impute locally using provided global metrics, optionally compute KM on imputed data,
     then fit logistic regression.
     """
+    strategy = _coerce_strategy(imputation_strategy)
     return _impute_and_train_lr_core(
         df,
         global_metrics=global_metrics,
         predictors=predictors,
         outcome=outcome,
         n_local_iterations=n_local_iterations,
-        imputation_strategy=imputation_strategy,
+        imputation_strategy=strategy,
         run_km=run_km,
         unique_event_times=unique_event_times,
         km_noise_type=km_noise_type,

@@ -14,6 +14,7 @@ from strata_fit_v6_imputation_py.imputation_strategies.base import (
     STRATEGY_REGISTRY,
 )
 from .partial import (
+    _coerce_strategy,
     imputation_compute_partial,
     impute_locally,
     impute_and_train_lr,
@@ -94,6 +95,9 @@ def main(
     aggregated global LR parameters, and pooled KM / D2T-event outcome.
     """
     org_ids = organizations or [org["id"] for org in client.organization.list()]
+
+    strategy = _coerce_strategy(imputation_strategy)
+
     results: Dict[str, Any] = {"organizations": org_ids}
 
     # 1) Validate locally on each node (optional)
@@ -110,14 +114,14 @@ def main(
             "method": "imputation_compute_partial",
             "kwargs": {
                 "columns": columns,
-                "imputation_strategy": imputation_strategy,
+                "imputation_strategy": strategy,
             },
         },
         organizations=org_ids,
     )
     node_metrics = client.wait_for_results(task_id=imp_task["id"])
 
-    imputer_cls = STRATEGY_REGISTRY[imputation_strategy]
+    imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
     global_metrics = imputer.aggregate(node_metrics=node_metrics, columns=columns)
     results["imputation_metrics"] = global_metrics
@@ -154,7 +158,7 @@ def main(
                 "predictors": predictors,
                 "outcome": outcome,
                 "n_local_iterations": n_local_iterations,
-                "imputation_strategy": imputation_strategy,
+                "imputation_strategy": strategy,
 
                 # KM args
                 "run_km": run_km,
@@ -223,10 +227,17 @@ def run_pipeline(
     Local mock: compute global metrics from a single dataframe,
     then run core once.
     """
-    imputer_cls = STRATEGY_REGISTRY[imputation_strategy]
+    strategy = _coerce_strategy(imputation_strategy)
+    imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
     node_metric = imputer.compute(df, imputation_columns).to_dict()
     global_metrics = imputer.aggregate([node_metric], imputation_columns)
+
+    imputed_df = impute_locally(
+        df,
+        global_metrics,
+        imputation_strategy=strategy,
+    )
 
     lr_result = _impute_and_train_lr_core(
         df,  # pass raw df; core imputes
