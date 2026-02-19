@@ -3,7 +3,7 @@ api_path: /api
 databases:
   - label: default
     type: csv
-    uri: /Users/ivanzhovannik/Desktop/packages/midn_py/vantage6_algorithms/v6-infra/infrastructure/data/imputation/alpha.csv
+    uri: /Users/cripepi2/Desktop/Coding/strata-fit-v6-meta-algo-py/strata-fit-v6-meta-algo-py/v6-infra/infrastructure/data/meta/alpha.csv
 encryption:
   enabled: false
   private_key: ''

@@ -1,8 +1,8 @@
 [meta_generic]
-image = "host.docker.internal:5001/strata-fit-v6-meta-algo:latest"
+image = "localhost:5001/strata-fit-v6-meta-algo:latest"
 name = "demo-meta-generic"
 description = "STRATA-FIT meta algorithm: validation -> imputation -> federated LR"
-organizations = [3]
+organizations = [4]
 collaboration = 1
 databases = [{ label = "default" }]
 [meta_generic.input]
