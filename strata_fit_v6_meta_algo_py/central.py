@@ -166,8 +166,7 @@ def main(
                 "km_noise_type": km_noise_type,
                 "km_snr": km_snr,
                 "km_random_seed": km_random_seed,
- },
-        },
+    },
         organizations=org_ids,
     )
     lr_partials = client.wait_for_results(task_id=lr_task["id"])
@@ -232,6 +231,7 @@ def run_pipeline(
     imputer = imputer_cls()
     node_metric = imputer.compute(df, imputation_columns).to_dict()
     global_metrics = imputer.aggregate([node_metric], imputation_columns)
+
     imputed_df = impute_locally(
         df,
         global_metrics,

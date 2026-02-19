@@ -4,6 +4,7 @@ Meta-algorithm partials exposed to Vantage6 and helper functions for local tests
 from typing import Any, Dict, List, Optional
 import pandas as pd
 from vantage6.algorithm.tools.decorators import data
+from vantage6.common import info
 
 from strata_fit_v6_imputation_py.imputation_strategies.base import (
     ImputationStrategyEnum,
@@ -21,6 +22,7 @@ from strata_fit_v6_km_py.types import DEFAULT_EVENT_INDICATOR_COLUMN
 from vantage6.common import info
 
 
+
 def _coerce_strategy(strategy: Any) -> ImputationStrategyEnum:
     """Normalize strategy from enum or string (name or value, case-insensitive)."""
     if isinstance(strategy, ImputationStrategyEnum):
@@ -34,7 +36,6 @@ def _coerce_strategy(strategy: Any) -> ImputationStrategyEnum:
             if candidate.lower() == member.value.lower() or candidate.lower() == member.name.lower():
                 return member
     raise ValueError(f"Unsupported imputation strategy: {strategy}")
-
 
 
 # ---------- Helper (undecorated) ----------
