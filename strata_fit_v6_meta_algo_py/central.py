@@ -94,7 +94,14 @@ def main(
     Returns validation summaries, global imputation metrics, per-node LR results,
     aggregated global LR parameters, and pooled KM / D2T-event outcome.
     """
-    org_ids = organizations or [org["id"] for org in client.organization.list()]
+  # Determine which organizations to target
+    if organizations:
+        org_ids = organizations
+    else:
+        nodes = client.node.list().get("data", [])
+        if not nodes:
+            raise RuntimeError("No nodes found to run the algorithm on.")
+        org_ids = sorted({n["organization_id"] for n in nodes})
 
     strategy = _coerce_strategy(imputation_strategy)
 
@@ -166,7 +173,10 @@ def main(
                 "km_noise_type": km_noise_type,
                 "km_snr": km_snr,
                 "km_random_seed": km_random_seed,
-    },
+             },
+        },
+
+
         organizations=org_ids,
     )
     lr_partials = client.wait_for_results(task_id=lr_task["id"])

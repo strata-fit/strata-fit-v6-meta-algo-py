@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import argparse
 from pathlib import Path
 
 # Ensure project root is on sys.path so `algorithms.*` imports work when run from repo root
@@ -9,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dynaconf import Dynaconf
 from vantage6.client import Client
 from algorithms.config import config
-from algorithms.types import Vantage6AlgorithmConfig
+from algorithms.schema import Vantage6AlgorithmConfig
 
 # Load algorithm presets from settings/algorithms.toml
 algorithm_settings = Dynaconf(settings_files=["settings/algorithms.toml"])

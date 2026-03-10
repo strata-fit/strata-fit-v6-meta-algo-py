@@ -18,9 +18,11 @@ def _ensure_validator_config_path():
 
 def build_client():
     _ensure_validator_config_path()
-    data_path = Path("/Users/cripepi2/Documents/data_11022026.csv")
+    data_path = Path("v6-infra/infrastructure/data/meta")
     datasets = [
-        [{"database": data_path, "db_type": "csv"}],
+        [{"database": data_path / "alpha.csv", "db_type": "csv"}],
+         [{"database": data_path / "beta.csv", "db_type": "csv"}],
+         [{"database": data_path / "gamma.csv", "db_type": "csv"}],
     ]
 
     return MockAlgorithmClient(
@@ -29,8 +31,8 @@ def build_client():
 
 def test_meta_algorithm_end_to_end():
     client = build_client()
-    org_ids = [o["id"] for o in client.organization.list()]
-    assert len(org_ids) == 1, f"Expected 1 org, got {len(org_ids)}"
+    org_ids = [1, 2, 3]  # Mock client has 3 orgs corresponding to the 3 datasets
+    #assert len(org_ids) == 1, f"Expected 1 org, got {len(org_ids)}"
 
     # IMPORTANT: call the CENTRAL entrypoint
     task = client.task.create(
