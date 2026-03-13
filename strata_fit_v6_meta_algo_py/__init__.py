@@ -1,6 +1,21 @@
-"""Package exports for vantage6 algorithm entrypoints."""
+"""Vantage6 entrypoints for the STRATA-FIT meta algorithm."""
 
-from .central import main  # noqa: F401
-from .partial import impute_locally, impute_and_train_lr, imputation_compute_partial, _impute_and_train_lr_core, validate_partial  # noqa: F401
+from .central import main
+from .partial import (
+    cox_compute_summed_z_imputed,
+    cox_get_unique_event_times_imputed,
+    cox_perform_iteration_imputed,
+    imputation_compute_partial,
+    impute_and_train_sklearn_linear,
+    validate_partial,
+)
 
-__all__ = ["main", "impute_locally", "impute_and_train_lr", "imputation_compute_partial", "_impute_and_train_lr_core", "validate_partial"]
+__all__ = [
+    "main",
+    "validate_partial",
+    "imputation_compute_partial",
+    "impute_and_train_sklearn_linear",
+    "cox_get_unique_event_times_imputed",
+    "cox_compute_summed_z_imputed",
+    "cox_perform_iteration_imputed",
+]

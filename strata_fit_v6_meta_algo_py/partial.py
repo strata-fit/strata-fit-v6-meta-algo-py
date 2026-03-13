@@ -1,136 +1,145 @@
-"""
-Meta-algorithm partials exposed to Vantage6 and helper functions for local tests.
-"""
 from typing import Any, Dict, List, Optional
+
 import pandas as pd
-from vantage6.algorithm.tools.decorators import data
+from vantage6.algorithm.client import AlgorithmClient
+from vantage6.algorithm.tools.decorators import algorithm_client, data
+from v6_federated_core import MethodContext, dispatch_registered_method, to_v6_result
 
-from strata_fit_v6_imputation_py.imputation_strategies.base import (
-    ImputationStrategyEnum,
-    STRATEGY_REGISTRY,
-)
-from strata_fit_v6_data_validator_py.logic import (
-    load_data_models_from_settings,
-    validate_csv,
-)
-from v6_logistic_regression_py.partials import _logistic_regression_partial
-from vantage6.common import info
+from .methods import METHOD_REGISTRY
 
 
-def _coerce_strategy(strategy: Any) -> ImputationStrategyEnum:
-    """Normalize strategy from enum or string (name or value, case-insensitive)."""
-    if isinstance(strategy, ImputationStrategyEnum):
-        return strategy
-    if isinstance(strategy, str):
-        candidate = strategy.strip()
-        # direct by name or value (case-insensitive)
-        for member in ImputationStrategyEnum:
-            if candidate == member.value or candidate == member.name:
-                return member
-            if candidate.lower() == member.value.lower() or candidate.lower() == member.name.lower():
-                return member
-    raise ValueError(f"Unsupported imputation strategy: {strategy}")
-
-
-# ---------- Helper (undecorated) ----------
-def impute_locally(
-    df: pd.DataFrame,
-    global_metrics: Dict[str, Any],
-    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER,
-) -> pd.DataFrame:
-    """Apply global metrics to a local dataframe using the chosen strategy."""
-    strategy = _coerce_strategy(imputation_strategy)
-    imputer_cls = STRATEGY_REGISTRY[strategy]
-    imputer = imputer_cls()
-    return imputer.impute(df, global_metrics)
-
-
-def _impute_and_train_lr_core(
-    df: pd.DataFrame,
-    global_metrics: Dict[str, Any],
-    predictors: List[str],
-    outcome: str,
-    n_local_iterations: int = 50,
-    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER,
-    **model_kwargs,
-) -> Dict[str, Any]:
-    strategy = _coerce_strategy(imputation_strategy)
-    imputed = impute_locally(
-        df,
-        global_metrics,
-        imputation_strategy=strategy,
-    )
-    init_attrs = {
-        "coef_": [[0.0 for _ in predictors]],
-        "intercept_": [0.0],
-        "classes_": [0, 1],
-    }
-    return _logistic_regression_partial(
-        imputed,
-        model_attributes=init_attrs,
-        predictors=predictors,
-        outcome=outcome,
-        n_local_iterations=n_local_iterations,
-        **model_kwargs,
-    )
-
-
-# ---------- Vantage6-exposed partials ----------
 @data(1)
 def validate_partial(
     df: pd.DataFrame,
     model_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Validate local dataframe against configured schema."""
-    models = load_data_models_from_settings()
-    target = model_name or next(iter(models.keys()))
-    model = models[target]
-    _, errors = validate_csv(df, model)
-    total_rows = len(df.index)
-    total_errors = len(errors)
-    return {
-        "total_rows": total_rows,
-        "total_errors": total_errors,
-        "error_rate_per_row": (total_errors / total_rows) if total_rows else 0,
-        "validation_passed": total_errors == 0,
-    }
+    envelope = dispatch_registered_method(
+        METHOD_REGISTRY,
+        "validate_partial",
+        {"model_name": model_name},
+        context=MethodContext(method="validate_partial", meta={"df": df}),
+    )
+    return to_v6_result(envelope)
 
 
 @data(1)
 def imputation_compute_partial(
     df: pd.DataFrame,
     columns: List[str],
-    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER,
-) -> Dict:
-    """Compute node-level imputation metrics."""
-    strategy = _coerce_strategy(imputation_strategy)
-    info(f"Available strategies: {STRATEGY_REGISTRY.keys()}")
-    info(f"Using strategy: {strategy}")
-    imputer_cls = STRATEGY_REGISTRY[strategy]
-    imputer = imputer_cls()
-    return imputer.compute(df, columns).to_dict()
+    imputation_strategy: str = "mean",
+) -> Dict[str, Any]:
+    envelope = dispatch_registered_method(
+        METHOD_REGISTRY,
+        "imputation_compute_partial",
+        {
+            "columns": columns,
+            "imputation_strategy": imputation_strategy,
+        },
+        context=MethodContext(method="imputation_compute_partial", meta={"df": df}),
+    )
+    return to_v6_result(envelope)
 
 
 @data(1)
-def impute_and_train_lr(
+def impute_and_train_sklearn_linear(
     df: pd.DataFrame,
     global_metrics: Dict[str, Any],
     predictors: List[str],
     outcome: str,
     n_local_iterations: int = 50,
-    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER,
-    **model_kwargs,
+    model_class: Any = None,
+    model_kwargs: Optional[Dict[str, Any]] = None,
+    imputation_strategy: str = "mean",
 ) -> Dict[str, Any]:
-    """
-    Impute locally using provided global metrics, then fit logistic regression.
-    """
-    strategy = _coerce_strategy(imputation_strategy)
-    return _impute_and_train_lr_core(
-        df,
-        global_metrics=global_metrics,
-        predictors=predictors,
-        outcome=outcome,
-        n_local_iterations=n_local_iterations,
-        imputation_strategy=strategy,
-        **model_kwargs,
+    envelope = dispatch_registered_method(
+        METHOD_REGISTRY,
+        "impute_and_train_sklearn_linear",
+        {
+            "global_metrics": global_metrics,
+            "predictors": predictors,
+            "outcome": outcome,
+            "n_local_iterations": n_local_iterations,
+            "model_class": model_class,
+            "model_kwargs": model_kwargs or {},
+            "imputation_strategy": imputation_strategy,
+        },
+        context=MethodContext(method="impute_and_train_sklearn_linear", meta={"df": df}),
     )
+    return to_v6_result(envelope)
+
+
+@data(1)
+@algorithm_client
+def cox_get_unique_event_times_imputed(
+    client: AlgorithmClient,
+    df: pd.DataFrame,
+    time_col: str,
+    outcome_col: str,
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    minimum_events: int = 10,
+) -> Dict[str, Any]:
+    envelope = dispatch_registered_method(
+        METHOD_REGISTRY,
+        "cox_get_unique_event_times_imputed",
+        {
+            "time_col": time_col,
+            "outcome_col": outcome_col,
+            "global_metrics": global_metrics,
+            "imputation_strategy": imputation_strategy,
+            "minimum_events": minimum_events,
+        },
+        context=MethodContext(
+            method="cox_get_unique_event_times_imputed",
+            meta={"df": df, "client": client},
+        ),
+    )
+    return to_v6_result(envelope)
+
+
+@data(1)
+def cox_compute_summed_z_imputed(
+    df: pd.DataFrame,
+    outcome_col: str,
+    expl_vars: List[str],
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+) -> Dict[str, Any]:
+    envelope = dispatch_registered_method(
+        METHOD_REGISTRY,
+        "cox_compute_summed_z_imputed",
+        {
+            "outcome_col": outcome_col,
+            "expl_vars": expl_vars,
+            "global_metrics": global_metrics,
+            "imputation_strategy": imputation_strategy,
+        },
+        context=MethodContext(method="cox_compute_summed_z_imputed", meta={"df": df}),
+    )
+    return to_v6_result(envelope)
+
+
+@data(1)
+def cox_perform_iteration_imputed(
+    df: pd.DataFrame,
+    time_col: str,
+    expl_vars: List[str],
+    beta: List[float],
+    unique_time_events: List[float],
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+) -> Dict[str, Any]:
+    envelope = dispatch_registered_method(
+        METHOD_REGISTRY,
+        "cox_perform_iteration_imputed",
+        {
+            "time_col": time_col,
+            "expl_vars": expl_vars,
+            "beta": beta,
+            "unique_time_events": unique_time_events,
+            "global_metrics": global_metrics,
+            "imputation_strategy": imputation_strategy,
+        },
+        context=MethodContext(method="cox_perform_iteration_imputed", meta={"df": df}),
+    )
+    return to_v6_result(envelope)

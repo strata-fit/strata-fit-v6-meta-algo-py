@@ -1,173 +1,127 @@
-"""
-Central orchestrator for the STRATA-FIT meta-algorithm.
-Exposes a Vantage6 entrypoint and keeps a local helper for mock testing.
-"""
 from typing import Any, Dict, List, Optional
-import numpy as np
-import pandas as pd
-from vantage6.algorithm.tools.decorators import algorithm_client
+
 from vantage6.algorithm.client import AlgorithmClient
+from vantage6.algorithm.tools.decorators import algorithm_client
+from v6_federated_core import MethodContext, dispatch_registered_method, to_v6_result
 
-from strata_fit_v6_imputation_py.imputation_strategies.base import (
-    ImputationStrategyEnum,
-    STRATEGY_REGISTRY,
-)
-from .partial import (
-    _coerce_strategy,
-    imputation_compute_partial,
-    impute_locally,
-    impute_and_train_lr,
-    _impute_and_train_lr_core,
-    validate_partial,
+from .contracts import FinalModelEnum
+from .methods import (
+    METHOD_REGISTRY,
+    build_min_organization_policies,
+    build_policy_context,
 )
 
 
-# -------------------
-# Vantage6 entrypoint
-# -------------------
+def _build_legacy_final_model_config(
+    final_model: FinalModelEnum,
+    *,
+    predictors: Optional[List[str]],
+    outcome: Optional[str],
+    n_local_iterations: int,
+    model_class: Any,
+    model_kwargs: Optional[Dict[str, Any]],
+    time_col: Optional[str],
+    outcome_col: Optional[str],
+    expl_vars: Optional[List[str]],
+    max_iterations: int,
+    tolerance: float,
+) -> Dict[str, Any]:
+    if final_model == FinalModelEnum.SKLEARN_LINEAR:
+        if not predictors or not outcome:
+            raise ValueError(
+                "For final_model='sklearn_linear', provide predictors and outcome "
+                "or pass final_model_config explicitly."
+            )
+        return {
+            "predictors": predictors,
+            "outcome": outcome,
+            "n_local_iterations": n_local_iterations,
+            "model_class": model_class,
+            "model_kwargs": model_kwargs or {},
+        }
+
+    resolved_outcome_col = outcome_col or outcome
+    if not time_col or not resolved_outcome_col or not expl_vars:
+        raise ValueError(
+            "For final_model='cox', provide time_col, outcome_col (or outcome), and expl_vars "
+            "or pass final_model_config explicitly."
+        )
+    return {
+        "time_col": time_col,
+        "outcome_col": resolved_outcome_col,
+        "expl_vars": expl_vars,
+        "max_iterations": max_iterations,
+        "tolerance": tolerance,
+    }
+
+
 @algorithm_client
 def main(
     client: AlgorithmClient,
     *,
     columns: List[str],
-    predictors: List[str],
-    outcome: str,
     organizations: Optional[List[int]] = None,
-    n_local_iterations: int = 50,
     model_name: Optional[str] = None,
     run_validation: bool = True,
-    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER,
-) -> Dict[str, Any]:
-    """
-    Orchestrate validation -> imputation -> LR training across nodes.
-
-    Returns validation summaries, global imputation metrics, per-node LR results,
-    and aggregated global LR parameters.
-    """
-    org_ids = organizations or [org["id"] for org in client.organization.list()]
-    strategy = _coerce_strategy(imputation_strategy)
-
-    results: Dict[str, Any] = {"organizations": org_ids}
-
-    # 1) Validate locally on each node (optional)
-    if run_validation:
-        val_task = client.task.create(
-            input_={"method": "validate_partial", "kwargs": {"model_name": model_name}},
-            organizations=org_ids,
-        )
-        validation = client.wait_for_results(task_id=val_task["id"])
-        results["validation"] = validation
-
-    # 2) Imputation metrics per node
-    imp_task = client.task.create(
-        input_={
-            "method": "imputation_compute_partial",
-            "kwargs": {
-                "columns": columns,
-                "imputation_strategy": strategy,
-            },
-        },
-        organizations=org_ids,
-    )
-    node_metrics = client.wait_for_results(task_id=imp_task["id"])
-
-    imputer_cls = STRATEGY_REGISTRY[strategy]
-    imputer = imputer_cls()
-    global_metrics = imputer.aggregate(node_metrics=node_metrics, columns=columns)
-    results["imputation_metrics"] = global_metrics
-
-    # 3) Train LR with imputed data on each node
-    lr_task = client.task.create(
-        input_={
-            "method": "impute_and_train_lr",
-            "kwargs": {
-                "global_metrics": global_metrics,
-                "predictors": predictors,
-                "outcome": outcome,
-                "n_local_iterations": n_local_iterations,
-                "imputation_strategy": strategy,
-            },
-        },
-        organizations=org_ids,
-    )
-    lr_partials = client.wait_for_results(task_id=lr_task["id"])
-    results["lr_partials"] = lr_partials
-    results["lr_model_attributes"] = _aggregate_lr_models(lr_partials)
-
-    return results
-
-
-def _aggregate_lr_models(partials: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Simple FedAvg over coef_ and intercept_, weighted by local sample size."""
-    if not partials:
-        return {}
-    total = sum(p.get("size", 0) for p in partials)
-    if total == 0:
-        return partials[0].get("model_attributes", {})
-
-    first = partials[0]["model_attributes"]
-    coef_sum = np.zeros_like(np.array(first["coef_"], dtype=float))
-    inter_sum = np.zeros_like(np.array(first["intercept_"], dtype=float))
-
-    for p in partials:
-        w = p.get("size", 0)
-        ma = p["model_attributes"]
-        coef_sum += np.array(ma["coef_"], dtype=float) * w
-        inter_sum += np.array(ma["intercept_"], dtype=float) * w
-
-    avg_coef = (coef_sum / total).tolist()
-    avg_inter = (inter_sum / total).tolist()
-
-    return {
-        "coef_": avg_coef,
-        "intercept_": avg_inter,
-        "classes_": first["classes_"],
-    }
-
-
-# -----------------------
-# Local/mock helper (kept)
-# -----------------------
-def run_pipeline(
-    df: pd.DataFrame,
-    *,
-    imputation_columns: List[str],
-    predictors: List[str],
-    outcome: str,
+    imputation_strategy: str = "mean",
+    final_model: str = "sklearn_linear",
+    final_model_config: Optional[Dict[str, Any]] = None,
+    predictors: Optional[List[str]] = None,
+    outcome: Optional[str] = None,
     n_local_iterations: int = 50,
-    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER,
+    model_class: Any = None,
+    model_kwargs: Optional[Dict[str, Any]] = None,
+    time_col: Optional[str] = None,
+    outcome_col: Optional[str] = None,
+    expl_vars: Optional[List[str]] = None,
+    max_iterations: int = 10,
+    tolerance: float = 1e-6,
 ) -> Dict[str, Any]:
     """
-    Local mock: compute global metrics from a single dataframe,
-    impute, and train LR once (used in tests).
-    """
-    strategy = _coerce_strategy(imputation_strategy)
-    imputer_cls = STRATEGY_REGISTRY[strategy]
-    imputer = imputer_cls()
-    node_metric = imputer.compute(df, imputation_columns).to_dict()
-    global_metrics = imputer.aggregate([node_metric], imputation_columns)
-    imputed_df = impute_locally(
-        df,
-        global_metrics,
-        imputation_strategy=strategy,
-    )
+    Meta orchestrator:
+      validation -> imputation metrics -> final federated model.
 
-    init_attrs = {
-        "coef_": [[0.0 for _ in predictors]],
-        "intercept_": [0.0],
-        "classes_": [0, 1],
-    }
-    lr_result = _impute_and_train_lr_core(
-        imputed_df,
-        global_metrics=global_metrics,
+    `final_model` supported values:
+      - `sklearn_linear`
+      - `cox`
+    """
+    resolved_final_model = FinalModelEnum(final_model)
+
+    resolved_final_config = final_model_config or _build_legacy_final_model_config(
+        resolved_final_model,
         predictors=predictors,
         outcome=outcome,
         n_local_iterations=n_local_iterations,
-        imputation_strategy=imputation_strategy,
+        model_class=model_class,
+        model_kwargs=model_kwargs,
+        time_col=time_col,
+        outcome_col=outcome_col,
+        expl_vars=expl_vars,
+        max_iterations=max_iterations,
+        tolerance=tolerance,
     )
 
-    return {
-        "imputation_metrics": global_metrics,
-        "lr_model_attributes": lr_result["model_attributes"],
-        "training_size": lr_result["size"],
-    }
+    resolved_org_ids = organizations or [org["id"] for org in client.organization.list()]
+
+    method_context = MethodContext(
+        method="main",
+        organization_ids=resolved_org_ids,
+        meta={"client": client},
+    )
+    envelope = dispatch_registered_method(
+        METHOD_REGISTRY,
+        "main",
+        {
+            "columns": columns,
+            "organizations": organizations,
+            "model_name": model_name,
+            "run_validation": run_validation,
+            "imputation_strategy": imputation_strategy,
+            "final_model": resolved_final_model,
+            "final_model_config": resolved_final_config,
+        },
+        context=method_context,
+        policies=build_min_organization_policies(),
+        policy_context=build_policy_context("main", resolved_org_ids),
+    )
+    return to_v6_result(envelope)
