@@ -40,19 +40,25 @@ def _build_legacy_final_model_config(
             "model_kwargs": model_kwargs or {},
         }
 
-    resolved_outcome_col = outcome_col or outcome
-    if not time_col or not resolved_outcome_col or not expl_vars:
-        raise ValueError(
-            "For final_model='cox', provide time_col, outcome_col (or outcome), and expl_vars "
-            "or pass final_model_config explicitly."
-        )
-    return {
-        "time_col": time_col,
-        "outcome_col": resolved_outcome_col,
-        "expl_vars": expl_vars,
-        "max_iterations": max_iterations,
-        "tolerance": tolerance,
-    }
+    if final_model == FinalModelEnum.COX:
+        resolved_outcome_col = outcome_col or outcome
+        if not time_col or not resolved_outcome_col or not expl_vars:
+            raise ValueError(
+                "For final_model='cox', provide time_col, outcome_col (or outcome), and expl_vars "
+                "or pass final_model_config explicitly."
+            )
+        return {
+            "time_col": time_col,
+            "outcome_col": resolved_outcome_col,
+            "expl_vars": expl_vars,
+            "max_iterations": max_iterations,
+            "tolerance": tolerance,
+        }
+
+    if final_model == FinalModelEnum.KM:
+        return {}
+
+    raise ValueError(f"Unsupported final_model for legacy config: {final_model}")
 
 
 @algorithm_client
@@ -84,6 +90,7 @@ def main(
     `final_model` supported values:
       - `sklearn_linear`
       - `cox`
+      - `km`
     """
     resolved_final_model = FinalModelEnum(final_model)
 

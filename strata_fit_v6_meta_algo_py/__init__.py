@@ -7,6 +7,8 @@ from .partial import (
     cox_perform_iteration_imputed,
     imputation_compute_partial,
     impute_and_train_sklearn_linear,
+    km_get_event_table_imputed,
+    km_get_unique_event_times_imputed,
     validate_partial,
 )
 
@@ -18,4 +20,6 @@ __all__ = [
     "cox_get_unique_event_times_imputed",
     "cox_compute_summed_z_imputed",
     "cox_perform_iteration_imputed",
+    "km_get_unique_event_times_imputed",
+    "km_get_event_table_imputed",
 ]

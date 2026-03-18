@@ -54,11 +54,23 @@ from .contracts import (
     ImputationComputePartialOutput,
     ImputeAndTrainSklearnLinearInput,
     ImputeAndTrainSklearnLinearOutput,
+    KMFinalConfig,
+    KMGetEventTableImputedInput,
+    KMGetEventTableImputedOutput,
+    KMGetUniqueEventTimesImputedInput,
+    KMGetUniqueEventTimesImputedOutput,
     MetaCentralInput,
     MetaCentralOutput,
     SklearnLinearFinalConfig,
     ValidatePartialInput,
     ValidatePartialOutput,
+)
+from .preprocessing import (
+    DEFAULT_EVENT_INDICATOR_COLUMN,
+    DEFAULT_INTERVAL_END_COLUMN,
+    DEFAULT_INTERVAL_START_COLUMN,
+    strata_fit_data_to_cox_input,
+    strata_fit_data_to_km_input,
 )
 
 MAX_N_THRESHOLD_RETRIES = 3
@@ -281,6 +293,13 @@ def cox_get_unique_event_times_imputed_handler(
     client = context.meta.get("client")
     strategy = _coerce_strategy(data.imputation_strategy)
     imputed = _impute_locally(df, data.global_metrics, strategy)
+    if data.preprocess_raw_data:
+        imputed = strata_fit_data_to_cox_input(
+            imputed,
+            time_col=data.time_col,
+            outcome_col=data.outcome_col,
+            expl_vars=[],
+        )
 
     cox_context = MethodContext(
         method="get_unique_event_times",
@@ -304,6 +323,12 @@ def cox_compute_summed_z_imputed_handler(
     df = _get_dataframe(context)
     strategy = _coerce_strategy(data.imputation_strategy)
     imputed = _impute_locally(df, data.global_metrics, strategy)
+    if data.preprocess_raw_data:
+        imputed = strata_fit_data_to_cox_input(
+            imputed,
+            outcome_col=data.outcome_col,
+            expl_vars=data.expl_vars,
+        )
 
     cox_context = MethodContext(
         method="compute_summed_z",
@@ -326,6 +351,12 @@ def cox_perform_iteration_imputed_handler(
     df = _get_dataframe(context)
     strategy = _coerce_strategy(data.imputation_strategy)
     imputed = _impute_locally(df, data.global_metrics, strategy)
+    if data.preprocess_raw_data:
+        imputed = strata_fit_data_to_cox_input(
+            imputed,
+            time_col=data.time_col,
+            expl_vars=data.expl_vars,
+        )
 
     cox_context = MethodContext(
         method="perform_iteration",
@@ -338,6 +369,91 @@ def cox_perform_iteration_imputed_handler(
         unique_time_events=data.unique_time_events,
     )
     return cox_perform_iteration_handler(cox_input, context=cox_context)
+
+
+def km_get_unique_event_times_imputed_handler(
+    data: KMGetUniqueEventTimesImputedInput,
+    context: Optional[MethodContext] = None,
+) -> Dict[str, Any]:
+    if context is None:
+        raise RuntimeError("Method context is required for km_get_unique_event_times_imputed")
+
+    df = _get_dataframe(context)
+    strategy = _coerce_strategy(data.imputation_strategy)
+    imputed = _impute_locally(df, data.global_metrics, strategy)
+    km_input = strata_fit_data_to_km_input(imputed) if data.preprocess_raw_data else imputed
+
+    if km_input.empty:
+        return {"times": []}
+
+    start_times = km_input[DEFAULT_INTERVAL_START_COLUMN].dropna().tolist()
+    end_times = km_input[DEFAULT_INTERVAL_END_COLUMN].dropna().tolist()
+    unique_times = sorted({float(value) for value in [*start_times, *end_times]})
+    return {"times": unique_times}
+
+
+def _build_km_event_table(km_df: pd.DataFrame, unique_event_times: List[float]) -> pd.DataFrame:
+    if not unique_event_times:
+        return pd.DataFrame(
+            columns=[
+                DEFAULT_INTERVAL_START_COLUMN,
+                "removed",
+                "observed",
+                "interval",
+                "censored",
+                "at_risk",
+            ]
+        )
+
+    event_table = (
+        pd.DataFrame({DEFAULT_INTERVAL_START_COLUMN: sorted(unique_event_times)})
+        .drop_duplicates(subset=DEFAULT_INTERVAL_START_COLUMN)
+        .reset_index(drop=True)
+    )
+
+    exact_events = km_df[km_df[DEFAULT_EVENT_INDICATOR_COLUMN] == "exact"]
+    censored_events = km_df[km_df[DEFAULT_EVENT_INDICATOR_COLUMN] == "censored"]
+    interval_events = km_df[km_df[DEFAULT_EVENT_INDICATOR_COLUMN] == "interval"]
+
+    event_counts = (
+        exact_events[DEFAULT_INTERVAL_START_COLUMN]
+        .value_counts()
+        .reindex(event_table[DEFAULT_INTERVAL_START_COLUMN], fill_value=0)
+    )
+    censored_counts = (
+        censored_events[DEFAULT_INTERVAL_START_COLUMN]
+        .value_counts()
+        .reindex(event_table[DEFAULT_INTERVAL_START_COLUMN], fill_value=0)
+    )
+    interval_counts = (
+        interval_events[DEFAULT_INTERVAL_END_COLUMN]
+        .value_counts()
+        .reindex(event_table[DEFAULT_INTERVAL_START_COLUMN], fill_value=0)
+    )
+
+    removed = event_counts + censored_counts + interval_counts
+    event_table["removed"] = removed.to_numpy(dtype=float)
+    event_table["observed"] = event_counts.to_numpy(dtype=float)
+    event_table["interval"] = interval_counts.to_numpy(dtype=float)
+    event_table["censored"] = censored_counts.to_numpy(dtype=float)
+    event_table["at_risk"] = event_table["removed"].iloc[::-1].cumsum().iloc[::-1]
+    return event_table
+
+
+def km_get_event_table_imputed_handler(
+    data: KMGetEventTableImputedInput,
+    context: Optional[MethodContext] = None,
+) -> Dict[str, Any]:
+    if context is None:
+        raise RuntimeError("Method context is required for km_get_event_table_imputed")
+
+    df = _get_dataframe(context)
+    strategy = _coerce_strategy(data.imputation_strategy)
+    imputed = _impute_locally(df, data.global_metrics, strategy)
+    km_input = strata_fit_data_to_km_input(imputed) if data.preprocess_raw_data else imputed
+
+    table = _build_km_event_table(km_input, data.unique_event_times)
+    return {"table": table.to_dict(orient="list")}
 
 
 def _aggregate_sklearn_linear_models(partials: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -453,6 +569,7 @@ def _run_cox_with_imputation(
                 "minimum_events": 10,
                 "global_metrics": global_metrics,
                 "imputation_strategy": strategy,
+                "preprocess_raw_data": config.preprocess_raw_data,
             },
             ids,
         )
@@ -496,6 +613,7 @@ def _run_cox_with_imputation(
             "expl_vars": config.expl_vars,
             "global_metrics": global_metrics,
             "imputation_strategy": strategy,
+            "preprocess_raw_data": config.preprocess_raw_data,
         },
         ids,
     )
@@ -518,6 +636,7 @@ def _run_cox_with_imputation(
                 "unique_time_events": unique_time_events,
                 "global_metrics": global_metrics,
                 "imputation_strategy": strategy,
+                "preprocess_raw_data": config.preprocess_raw_data,
             },
             ids,
         )
@@ -626,6 +745,88 @@ def _run_cox_with_imputation(
     }
 
 
+def _run_km_with_imputation(
+    client: AlgorithmClient,
+    org_ids: List[int],
+    config: KMFinalConfig,
+    global_metrics: Dict[str, Any],
+    strategy: ImputationStrategyEnum,
+) -> Dict[str, Any]:
+    runner = TaskRunner(client)
+
+    unique_step = WorkflowStepSpec(
+        name="km-unique-events",
+        method="km_get_unique_event_times_imputed",
+        input_model=KMGetUniqueEventTimesImputedInput,
+        output_model=KMGetUniqueEventTimesImputedOutput,
+    )
+    table_step = WorkflowStepSpec(
+        name="km-event-table",
+        method="km_get_event_table_imputed",
+        input_model=KMGetEventTableImputedInput,
+        output_model=KMGetEventTableImputedOutput,
+    )
+
+    unique_results = runner.run(
+        unique_step,
+        {
+            "global_metrics": global_metrics,
+            "imputation_strategy": strategy,
+            "preprocess_raw_data": config.preprocess_raw_data,
+        },
+        org_ids,
+    )
+    unique_event_times = sorted(
+        {float(time_value) for output in unique_results for time_value in output.get("times", [])}
+    )
+
+    table_results = runner.run(
+        table_step,
+        {
+            "unique_event_times": unique_event_times,
+            "global_metrics": global_metrics,
+            "imputation_strategy": strategy,
+            "preprocess_raw_data": config.preprocess_raw_data,
+        },
+        org_ids,
+    )
+
+    tables = [pd.DataFrame(output.get("table", {})) for output in table_results]
+    if tables:
+        km_df = pd.concat(tables, ignore_index=True)
+        km_df = (
+            km_df.groupby(DEFAULT_INTERVAL_START_COLUMN, as_index=False)[
+                ["removed", "observed", "interval", "censored", "at_risk"]
+            ].sum()
+        )
+    else:
+        km_df = pd.DataFrame(
+            columns=[
+                DEFAULT_INTERVAL_START_COLUMN,
+                "removed",
+                "observed",
+                "interval",
+                "censored",
+                "at_risk",
+            ]
+        )
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        km_df["hazard"] = np.divide(
+            km_df["observed"] + 0.5 * km_df["interval"],
+            km_df["at_risk"],
+            out=np.zeros_like(km_df["at_risk"], dtype=float),
+            where=km_df["at_risk"].to_numpy(dtype=float) > 0,
+        )
+    km_df["cumulative_incidence"] = 1 - (1 - km_df["hazard"]).cumprod()
+
+    return {
+        "included_organizations": org_ids,
+        "unique_event_times": unique_event_times,
+        "km_curve": km_df.to_json(),
+    }
+
+
 def central_handler(
     data: MetaCentralInput,
     context: Optional[MethodContext] = None,
@@ -707,6 +908,15 @@ def central_handler(
             global_metrics=global_metrics,
             strategy=strategy,
         )
+    elif data.final_model == FinalModelEnum.KM:
+        km_config = KMFinalConfig.model_validate(data.final_model_config)
+        results["final_result"] = _run_km_with_imputation(
+            client=client,
+            org_ids=org_ids,
+            config=km_config,
+            global_metrics=global_metrics,
+            strategy=strategy,
+        )
     else:
         raise DataContractError(f"Unsupported final model: {data.final_model}")
 
@@ -757,6 +967,18 @@ METHOD_REGISTRY = MethodRegistry(
             input_model=CoxPerformIterationImputedInput,
             output_model=CoxPerformIterationImputedOutput,
             handler=cox_perform_iteration_imputed_handler,
+        ),
+        MethodSpec(
+            name="km_get_unique_event_times_imputed",
+            input_model=KMGetUniqueEventTimesImputedInput,
+            output_model=KMGetUniqueEventTimesImputedOutput,
+            handler=km_get_unique_event_times_imputed_handler,
+        ),
+        MethodSpec(
+            name="km_get_event_table_imputed",
+            input_model=KMGetEventTableImputedInput,
+            output_model=KMGetEventTableImputedOutput,
+            handler=km_get_event_table_imputed_handler,
         ),
     ]
 )

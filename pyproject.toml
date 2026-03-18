@@ -12,11 +12,12 @@ license = {text = "Proprietary"}
 authors = [{name = "Strata-Fit Team"}]
 dependencies = [
     "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/refs/heads/main.tar.gz",
+    "strata-fit-v6-km-py @ https://github.com/strata-fit/strata-fit-v6-km-py/archive/refs/heads/main.tar.gz",
     "pandas>=2.1.4",
     "numpy>=1.26.0",
     "polars>=1.0.0",
     "scipy>=1.11.0",
-    "vantage6-algorithm-tools>=4.13.3",
+    "vantage6-algorithm-tools==4.13.3",
 ]
 
 [project.optional-dependencies]

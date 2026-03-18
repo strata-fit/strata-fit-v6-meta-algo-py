@@ -50,7 +50,7 @@ echo "[meta-smoke] generating synthetic data"
 "$PYTHON_BIN" "$ROOT_DIR/tests/infra/prepare_meta_smoke_data.py" \
   --output-dir "$DATA_DIR" \
   --node-count "$NODE_COUNT" \
-  --rows 40
+  --patients-per-node "${V6_PATIENTS_PER_NODE:-36}"
 
 echo "[meta-smoke] generating nodes.env"
 "$ROOT_DIR/tests/infra/generate_nodes_env.sh" "$NODE_COUNT" "$DATA_DIR" "$NODES_ENV"
@@ -114,6 +114,7 @@ V6_ALGO_IMAGE="$IMAGE" \
 V6_NODE_COUNT="$NODE_COUNT" \
 V6_COLLABORATION_NAME="$COLLAB_NAME" \
 V6_TASK_TIMEOUT_S="$TASK_TIMEOUT_S" \
+V6_DATA_DIR="$DATA_DIR" \
 "$PYTHON_BIN" "$ROOT_DIR/tests/infra/run_algo_smoke.py"
 
 cd "$INFRA_DIR/infrastructure"

@@ -9,6 +9,7 @@ from strata_fit_v6_imputation_py.imputation_strategies.base import ImputationStr
 class FinalModelEnum(str, Enum):
     SKLEARN_LINEAR = "sklearn_linear"
     COX = "cox"
+    KM = "km"
 
 
 class SklearnLinearFinalConfig(BaseModel):
@@ -25,6 +26,11 @@ class CoxFinalConfig(BaseModel):
     expl_vars: List[str] = Field(min_length=1)
     max_iterations: int = 10
     tolerance: float = 1e-6
+    preprocess_raw_data: bool = False
+
+
+class KMFinalConfig(BaseModel):
+    preprocess_raw_data: bool = True
 
 
 class MetaCentralInput(BaseModel):
@@ -86,6 +92,7 @@ class CoxGetUniqueEventTimesImputedInput(BaseModel):
     global_metrics: Dict[str, Any]
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
     minimum_events: int = 10
+    preprocess_raw_data: bool = False
 
 
 class CoxGetUniqueEventTimesImputedOutput(BaseModel):
@@ -98,6 +105,7 @@ class CoxComputeSummedZImputedInput(BaseModel):
     expl_vars: List[str] = Field(min_length=1)
     global_metrics: Dict[str, Any]
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    preprocess_raw_data: bool = False
 
 
 class CoxComputeSummedZImputedOutput(BaseModel):
@@ -111,9 +119,31 @@ class CoxPerformIterationImputedInput(BaseModel):
     unique_time_events: List[float]
     global_metrics: Dict[str, Any]
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    preprocess_raw_data: bool = False
 
 
 class CoxPerformIterationImputedOutput(BaseModel):
     agg1: List[float]
     agg2: Dict[str, Dict[Any, float]]
     agg3: List[List[List[float]]]
+
+
+class KMGetUniqueEventTimesImputedInput(BaseModel):
+    global_metrics: Dict[str, Any]
+    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    preprocess_raw_data: bool = True
+
+
+class KMGetUniqueEventTimesImputedOutput(BaseModel):
+    times: List[float] = Field(default_factory=list)
+
+
+class KMGetEventTableImputedInput(BaseModel):
+    unique_event_times: List[float] = Field(default_factory=list)
+    global_metrics: Dict[str, Any]
+    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    preprocess_raw_data: bool = True
+
+
+class KMGetEventTableImputedOutput(BaseModel):
+    table: Dict[str, List[float]]
