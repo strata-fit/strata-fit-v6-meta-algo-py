@@ -1,66 +1,99 @@
-import os
-import importlib.util
+from __future__ import annotations
+
 from pathlib import Path
+from io import StringIO
+
+import pandas as pd
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 
-
-def _ensure_validator_config_path():
-    """Point CONFIG_PATH env var to the installed schema config so Dynaconf can load it."""
-    if os.environ.get("CONFIG_PATH"):
-        return
-    spec = importlib.util.find_spec("strata_fit_v6_data_validator_py")
-    if not spec or not spec.origin:
-        return
-    config_dir = Path(spec.origin).parent.parent / "config"
-    if config_dir.exists():
-        os.environ["CONFIG_PATH"] = str(config_dir)
+from tests.synthetic_strata_fit_data import SyntheticConfig, write_partitioned_csv
 
 
-def build_client():
-    _ensure_validator_config_path()
-    data_dir = Path("v6-infra/infrastructure/data/meta")
-    datasets = [
-        [{"database": data_dir / "alpha.csv", "db_type": "csv"}],
-        [{"database": data_dir / "beta.csv", "db_type": "csv"}],
-        [{"database": data_dir / "gamma.csv", "db_type": "csv"}],
-    ]
-    return MockAlgorithmClient(
-        datasets=datasets, module="strata_fit_v6_meta_algo_py.central"
+IMPUTATION_COLUMNS = ["DAS28", "CRP", "HAQ", "Pat_global", "Ph_global", "Pain", "eq5d"]
+COX_EXPL_VARS = ["Age_diagnosis", "DAS28", "CRP", "HAQ", "RF_positivity"]
+
+
+def _build_client_from_paths(paths: list[Path]) -> MockAlgorithmClient:
+    datasets = [[{"database": path, "db_type": "csv"}] for path in paths]
+    return MockAlgorithmClient(datasets=datasets, module="strata_fit_v6_meta_algo_py")
+
+
+def _build_client_with_stratafit_data(tmp_path: Path) -> tuple[MockAlgorithmClient, list[Path]]:
+    csv_paths = write_partitioned_csv(
+        output_dir=tmp_path,
+        config=SyntheticConfig(node_count=3, patients_per_node=32, seed=20260318),
     )
+    return _build_client_from_paths(csv_paths), csv_paths
 
 
-def test_meta_algorithm_end_to_end():
-    client = build_client()
-    org_ids = [o["id"] for o in client.organization.list()]
+def test_meta_raw_stratafit_cox_end_to_end(tmp_path: Path) -> None:
+    client, _ = _build_client_with_stratafit_data(tmp_path)
+    org_ids = [organization["id"] for organization in client.organization.list()]
 
     task = client.task.create(
         input_={
             "master": True,
             "method": "main",
             "kwargs": {
-                "columns": ["DAS28", "CRP", "HAQ", "Pat_global", "Pain"],
-                "predictors": ["Age_diagnosis", "DAS28", "CRP", "HAQ"],
-                "outcome": "RF_positivity",
-                "n_local_iterations": 30,
+                "columns": IMPUTATION_COLUMNS,
                 "run_validation": True,
+                "model_name": "PatientData",
+                "imputation_strategy": "mean",
+                "final_model": "cox",
                 "organizations": org_ids,
+                "final_model_config": {
+                    "time_col": "time",
+                    "outcome_col": "event",
+                    "expl_vars": COX_EXPL_VARS,
+                    "max_iterations": 12,
+                    "tolerance": 1e-6,
+                    "preprocess_raw_data": True,
+                },
             },
         },
         organizations=[org_ids[0]],
     )
 
     result = client.result.get(task["id"])
-    print(result)
+    final_result = result["final_result"]
 
-    assert set(
-        ["imputation_metrics", "lr_partials", "lr_model_attributes", "organizations"]
-    ).issubset(result.keys())
+    assert result["final_model"] == "cox"
+    assert len(result["validation"]) == len(org_ids)
+    assert all(item["validation_passed"] for item in result["validation"])
+    assert "model" in final_result
+    assert final_result["included_organizations"]
 
-    assert result["lr_model_attributes"].get("coef_"), "Coefficients missing"
 
-    # Ensure each partial trained on some rows (imputation should remove NaNs in predictors)
-    for partial in result["lr_partials"]:
-        assert partial.get("size", 0) > 0
+def test_meta_raw_stratafit_km_end_to_end(tmp_path: Path) -> None:
+    client, _ = _build_client_with_stratafit_data(tmp_path)
+    org_ids = [organization["id"] for organization in client.organization.list()]
 
-if __name__ == "__main__":
-    test_meta_algorithm_end_to_end()
+    task = client.task.create(
+        input_={
+            "master": True,
+            "method": "main",
+            "kwargs": {
+                "columns": IMPUTATION_COLUMNS,
+                "run_validation": True,
+                "model_name": "PatientData",
+                "imputation_strategy": "mean",
+                "final_model": "km",
+                "organizations": org_ids,
+                "final_model_config": {
+                    "preprocess_raw_data": True,
+                },
+            },
+        },
+        organizations=[org_ids[0]],
+    )
+
+    result = client.result.get(task["id"])
+    final_result = result["final_result"]
+
+    assert result["final_model"] == "km"
+    assert len(result["validation"]) == len(org_ids)
+    assert all(item["validation_passed"] for item in result["validation"])
+
+    km_curve = pd.read_json(StringIO(final_result["km_curve"]))
+    assert not km_curve.empty
+    assert "cumulative_incidence" in km_curve.columns

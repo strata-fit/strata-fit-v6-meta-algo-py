@@ -22,11 +22,27 @@ COPY . /app
 # Install extra algorithm packages via Makefile
 RUN make install-algo-packages
 
-# Core STRATA-FIT dependencies needed by the meta algorithm (pinned to commits)
+# Shared dependencies (install core once to avoid resolver conflicts across git refs)
 RUN pip install \
-    git+https://github.com/strata-fit/strata-fit-data-schema.git@53529a81518c43a57701a0c37c457af21018f8d5 \
-    git+https://github.com/strata-fit/strata-fit-v6-imputation-py.git@0dc00d97aff9d6394d1accbc247a44e081168003 \
-    git+https://github.com/strata-fit/strata-fit-v6-logistic-regression-py.git@b2d1b3597ea8cdf84763f86d88c382e3d352e14d
+    "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/refs/heads/main.tar.gz" \
+    dynaconf \
+    fastapi \
+    gunicorn \
+    uvicorn \
+    python-multipart \
+    polars \
+    pyarrow \
+    numpy \
+    pandas \
+    scipy \
+    scikit-learn
+
+# Core STRATA-FIT algorithm packages (pinned). Use --no-deps to keep core pin consistent.
+RUN pip install \
+    --no-deps \
+    git+https://github.com/strata-fit/strata-fit-data-schema.git@8812c7552a08b0411e6e0233d336919d1e2460d9 \
+    git+https://github.com/strata-fit/strata-fit-v6-imputation-py.git@07e4599a4e0f9539a18e8de2285dcc979507e8d1 \
+    git+https://github.com/MaastrichtU-CDS/v6-coxph.git@e0e8a98b68207c0e3756628a975dc8a2cfa95f5f
 
 # Install this algorithm package
 RUN pip install /app
