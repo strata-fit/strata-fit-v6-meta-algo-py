@@ -1,7 +1,9 @@
 import math
+import os
 import warnings
 from importlib import import_module
 from inspect import Parameter, signature
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -24,6 +26,25 @@ from coxph.methods import (
     get_unique_event_times_handler as cox_get_unique_event_times_handler,
     perform_iteration_handler as cox_perform_iteration_handler,
 )
+
+
+def _bootstrap_validator_config_path() -> None:
+    # The validator package reads CONFIG_PATH at import-time via Dynaconf. In
+    # algorithm containers the working directory is not the project root, so
+    # default "config/" lookup can fail unless we point to the installed package.
+    if os.getenv("CONFIG_PATH"):
+        return
+    try:
+        import config as validator_config_pkg
+    except Exception:
+        return
+
+    config_dir = Path(validator_config_pkg.__file__).resolve().parent
+    os.environ["CONFIG_PATH"] = str(config_dir)
+
+
+_bootstrap_validator_config_path()
+
 from strata_fit_v6_data_validator_py.logic import load_data_models_from_settings, validate_csv
 from strata_fit_v6_imputation_py.imputation_strategies.base import (
     ImputationStrategyEnum,
