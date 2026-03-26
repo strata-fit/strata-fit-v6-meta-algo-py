@@ -1,0 +1,91 @@
+name: Vantage6 Algorithm CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'release/v*.*.*'
+      - 'dev'
+  pull_request:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8
+
+      - name: Lint with flake8
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+
+  build-and-push:
+    name: Build and Push Docker Image
+    if: startsWith(github.ref, 'refs/tags/release/v') || github.ref == 'refs/tags/dev'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract tag name
+        id: extract_tag
+        run: |
+          RAW_TAG="${GITHUB_REF#refs/tags/}"
+          RELEASE_TAG="${RAW_TAG#release/}"
+          SAFE_TAG="${RAW_TAG//\//-}"
+          echo "raw_tag=${RAW_TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "safe_tag=${SAFE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Downcase REPO name
+        run: echo "REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image (release)
+        if: startsWith(github.ref, 'refs/tags/release/v')
+        uses: docker/build-push-action@v6
+        with:
+          context: ./
+          push: true
+          tags: |
+            ghcr.io/${{ env.REPO }}:latest
+            ghcr.io/${{ env.REPO }}:${{ steps.extract_tag.outputs.release_tag }}
+
+      - name: Build and push Docker image (dev)
+        if: github.ref == 'refs/tags/dev'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./
+          push: true
+          tags: ghcr.io/${{ env.REPO }}:dev
