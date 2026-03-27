@@ -189,8 +189,8 @@ def _reverse_engineer_visits(latent: pd.DataFrame, seed: int) -> pd.DataFrame:
 
 
 def generate_partitioned_strata_fit_datasets(config: SyntheticConfig) -> list[pd.DataFrame]:
-    if config.node_count < 2 or config.node_count > 8:
-        raise ValueError("node_count must be between 2 and 8")
+    if config.node_count < 1 or config.node_count > 8:
+        raise ValueError("node_count must be between 1 and 8")
     if config.patients_per_node < 12:
         raise ValueError("patients_per_node must be >= 12 for stable Cox threshold checks")
 

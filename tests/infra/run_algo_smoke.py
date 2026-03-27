@@ -42,6 +42,15 @@ def env_int(name: str, default: int) -> int:
     return int(raw)
 
 
+def env_csv(name: str, default: list[str]) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        return list(default)
+
+    parsed = [value.strip() for value in raw.split(",") if value.strip()]
+    return parsed or list(default)
+
+
 def decode_result(value: Any) -> Any:
     if value is None or isinstance(value, dict):
         return value
@@ -155,15 +164,20 @@ def create_task_with_master_fallback(
     raise RuntimeError(f"Failed to create task '{name}' with any candidate master ({joined})")
 
 
-def _build_linear_input(org_ids: list[int]) -> dict[str, Any]:
+def _build_linear_input(
+    org_ids: list[int],
+    *,
+    imputation_columns: list[str],
+    imputation_strategy: str,
+) -> dict[str, Any]:
     return {
         "master": True,
         "method": "main",
         "kwargs": {
-            "columns": IMPUTATION_COLUMNS,
+            "columns": imputation_columns,
             "run_validation": True,
             "model_name": "PatientData",
-            "imputation_strategy": "mean",
+            "imputation_strategy": imputation_strategy,
             "final_model": "sklearn_linear",
             "organizations": org_ids,
             "final_model_config": {
@@ -176,21 +190,27 @@ def _build_linear_input(org_ids: list[int]) -> dict[str, Any]:
     }
 
 
-def _build_cox_input(org_ids: list[int]) -> dict[str, Any]:
+def _build_cox_input(
+    org_ids: list[int],
+    *,
+    imputation_columns: list[str],
+    imputation_strategy: str,
+    cox_expl_vars: list[str],
+) -> dict[str, Any]:
     return {
         "master": True,
         "method": "main",
         "kwargs": {
-            "columns": IMPUTATION_COLUMNS,
+            "columns": imputation_columns,
             "run_validation": True,
             "model_name": "PatientData",
-            "imputation_strategy": "mean",
+            "imputation_strategy": imputation_strategy,
             "final_model": "cox",
             "organizations": org_ids,
             "final_model_config": {
                 "time_col": "time",
                 "outcome_col": "event",
-                "expl_vars": COX_EXPL_VARS,
+                "expl_vars": cox_expl_vars,
                 "max_iterations": 12,
                 "tolerance": 1e-6,
                 "preprocess_raw_data": True,
@@ -199,15 +219,20 @@ def _build_cox_input(org_ids: list[int]) -> dict[str, Any]:
     }
 
 
-def _build_km_input(org_ids: list[int]) -> dict[str, Any]:
+def _build_km_input(
+    org_ids: list[int],
+    *,
+    imputation_columns: list[str],
+    imputation_strategy: str,
+) -> dict[str, Any]:
     return {
         "master": True,
         "method": "main",
         "kwargs": {
-            "columns": IMPUTATION_COLUMNS,
+            "columns": imputation_columns,
             "run_validation": True,
             "model_name": "PatientData",
-            "imputation_strategy": "mean",
+            "imputation_strategy": imputation_strategy,
             "final_model": "km",
             "organizations": org_ids,
             "final_model_config": {
@@ -217,20 +242,51 @@ def _build_km_input(org_ids: list[int]) -> dict[str, Any]:
     }
 
 
-def _build_mock_reference(data_paths: list[Path], run_linear: bool, run_cox: bool, run_km: bool) -> dict[str, dict[str, Any]]:
+def _build_mock_reference(
+    data_paths: list[Path],
+    run_linear: bool,
+    run_cox: bool,
+    run_km: bool,
+    *,
+    imputation_columns: list[str],
+    imputation_strategy: str,
+    cox_expl_vars: list[str],
+) -> dict[str, dict[str, Any]]:
     datasets = [[{"database": path, "db_type": "csv"}] for path in data_paths]
     mock_client = MockAlgorithmClient(datasets=datasets, module="strata_fit_v6_meta_algo_py")
     org_ids = [organization["id"] for organization in mock_client.organization.list()]
 
     out: dict[str, dict[str, Any]] = {}
     if run_linear:
-        task = mock_client.task.create(input_=_build_linear_input(org_ids), organizations=[org_ids[0]])
+        task = mock_client.task.create(
+            input_=_build_linear_input(
+                org_ids,
+                imputation_columns=imputation_columns,
+                imputation_strategy=imputation_strategy,
+            ),
+            organizations=[org_ids[0]],
+        )
         out["sklearn_linear"] = mock_client.result.get(task["id"])
     if run_cox:
-        task = mock_client.task.create(input_=_build_cox_input(org_ids), organizations=[org_ids[0]])
+        task = mock_client.task.create(
+            input_=_build_cox_input(
+                org_ids,
+                imputation_columns=imputation_columns,
+                imputation_strategy=imputation_strategy,
+                cox_expl_vars=cox_expl_vars,
+            ),
+            organizations=[org_ids[0]],
+        )
         out["cox"] = mock_client.result.get(task["id"])
     if run_km:
-        task = mock_client.task.create(input_=_build_km_input(org_ids), organizations=[org_ids[0]])
+        task = mock_client.task.create(
+            input_=_build_km_input(
+                org_ids,
+                imputation_columns=imputation_columns,
+                imputation_strategy=imputation_strategy,
+            ),
+            organizations=[org_ids[0]],
+        )
         out["km"] = mock_client.result.get(task["id"])
     return out
 
@@ -281,11 +337,14 @@ def main() -> None:
     run_linear = env_bool("V6_RUN_LINEAR", True)
     run_cox = env_bool("V6_RUN_COX", True)
     run_km = env_bool("V6_RUN_KM", True)
+    imputation_strategy = os.getenv("V6_IMPUTATION_STRATEGY", "mean").strip() or "mean"
+    imputation_columns = env_csv("V6_IMPUTATION_COLUMNS", IMPUTATION_COLUMNS)
+    cox_expl_vars = env_csv("V6_COX_EXPL_VARS", COX_EXPL_VARS)
 
     ordered_names = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"]
     selected = ordered_names[:node_count]
-    if len(selected) < 2:
-        raise ValueError("V6_NODE_COUNT must be >= 2")
+    if len(selected) < 1:
+        raise ValueError("V6_NODE_COUNT must be >= 1")
 
     data_dir_raw = os.getenv("V6_DATA_DIR")
     if not data_dir_raw:
@@ -300,7 +359,15 @@ def main() -> None:
         raise ValueError("Enable at least one of V6_RUN_LINEAR, V6_RUN_COX, or V6_RUN_KM")
 
     print("building mock baseline on the same partitions")
-    mock_results = _build_mock_reference(data_paths, run_linear, run_cox, run_km)
+    mock_results = _build_mock_reference(
+        data_paths,
+        run_linear,
+        run_cox,
+        run_km,
+        imputation_columns=imputation_columns,
+        imputation_strategy=imputation_strategy,
+        cox_expl_vars=cox_expl_vars,
+    )
 
     client = Client(host, port, api_path)
     master_candidates = sorted(selected, key=lambda name: (name != "gamma", name))
@@ -335,7 +402,11 @@ def main() -> None:
             name=f"meta-linear-{node_count}nodes",
             image=image,
             description="meta sklearn_linear smoke",
-            input_=_build_linear_input(org_ids),
+            input_=_build_linear_input(
+                org_ids,
+                imputation_columns=imputation_columns,
+                imputation_strategy=imputation_strategy,
+            ),
         )
         task_id = task["id"]
         print(f"created linear task {task_id} orgs={selected} master={master}")
@@ -359,7 +430,12 @@ def main() -> None:
             name=f"meta-cox-{node_count}nodes",
             image=image,
             description="meta cox smoke",
-            input_=_build_cox_input(org_ids),
+            input_=_build_cox_input(
+                org_ids,
+                imputation_columns=imputation_columns,
+                imputation_strategy=imputation_strategy,
+                cox_expl_vars=cox_expl_vars,
+            ),
         )
         task_id = task["id"]
         print(f"created cox task {task_id} orgs={selected} master={master}")
@@ -384,7 +460,11 @@ def main() -> None:
             name=f"meta-km-{node_count}nodes",
             image=image,
             description="meta km smoke",
-            input_=_build_km_input(org_ids),
+            input_=_build_km_input(
+                org_ids,
+                imputation_columns=imputation_columns,
+                imputation_strategy=imputation_strategy,
+            ),
         )
         task_id = task["id"]
         print(f"created km task {task_id} orgs={selected} master={master}")

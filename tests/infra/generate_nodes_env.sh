@@ -15,8 +15,8 @@ if ! [[ "$node_count" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-if [ "$node_count" -lt 2 ] || [ "$node_count" -gt 8 ]; then
-  echo "node_count must be between 2 and 8" >&2
+if [ "$node_count" -lt 1 ] || [ "$node_count" -gt 8 ]; then
+  echo "node_count must be between 1 and 8" >&2
   exit 1
 fi
 
