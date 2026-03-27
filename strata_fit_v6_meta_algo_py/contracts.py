@@ -67,7 +67,7 @@ class ImputationComputePartialInput(BaseModel):
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
 
 
-class ImputationComputePartialOutput(RootModel[Dict[str, Dict[Any, Any]]]):
+class ImputationComputePartialOutput(RootModel[Dict[str, Any]]):
     pass
 
 

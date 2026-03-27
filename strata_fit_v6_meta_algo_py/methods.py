@@ -280,7 +280,7 @@ def imputation_compute_partial_handler(
     strategy = _coerce_strategy(data.imputation_strategy)
     imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
-    return imputer.compute(df, data.columns).to_dict()
+    return imputer.compute(df, data.columns)
 
 
 def impute_and_train_sklearn_linear_handler(
