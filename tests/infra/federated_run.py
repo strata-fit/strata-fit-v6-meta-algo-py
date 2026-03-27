@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import subprocess
@@ -23,8 +22,6 @@ from tests.infra.run_algo_smoke import (
     _build_cox_input,
     _build_km_input,
     assert_all_child_runs_completed,
-    authenticate_node_user,
-    create_task_with_master_fallback,
     fetch_decoded_result,
     wait_for_terminal,
 )
@@ -33,138 +30,225 @@ DEFAULT_IMPUTATION_COLUMNS = ["DAS28", "CRP", "HAQ", "Pat_global", "Ph_global", 
 DEFAULT_COX_EXPL_VARS = ["Age_diagnosis", "DAS28", "CRP", "HAQ", "RF_positivity"]
 
 
-def parse_csv(raw: str, fallback: list[str]) -> list[str]:
-    values = [part.strip() for part in raw.split(",") if part.strip()]
-    return values or list(fallback)
+# ============================================================================
+# Connection and credentials
+# ============================================================================
+V6_SERVER_HOST = os.getenv("V6_SERVER_HOST", "http://localhost")
+V6_SERVER_PORT = int(os.getenv("V6_SERVER_PORT", "5070"))
+V6_API_PATH = os.getenv("V6_API_PATH", "/api")
+
+V6_USERNAME = os.getenv("V6_USERNAME", "alpha-user")
+V6_PASSWORD = os.getenv("V6_PASSWORD", "alpha-password")
+V6_MFA_CODE = os.getenv("V6_MFA_CODE", "")
+V6_USER_PRIVATE_KEY = os.getenv("V6_USER_PRIVATE_KEY", "")
 
 
-def run_data_generation(
-    *,
-    python_bin: str,
-    data_dir: Path,
-    manifest_path: Path,
-    node_count: int,
-    patients_per_node: int,
-    rows_per_node: int,
-    seed: int,
-    max_attempts: int,
-    min_c_index: float,
-    max_logrank_p: float,
-) -> None:
+# ============================================================================
+# Collaboration, organizations, image
+# ============================================================================
+V6_COLLABORATION_ID = int(os.getenv("V6_COLLABORATION_ID", "1"))
+V6_MASTER_ORG_ID = int(os.getenv("V6_MASTER_ORG_ID", "1"))
+V6_ORGANIZATION_IDS = [
+    int(value.strip())
+    for value in os.getenv("V6_ORGANIZATION_IDS", str(V6_MASTER_ORG_ID)).split(",")
+    if value.strip()
+]
+
+V6_ALGO_IMAGE = os.getenv(
+    "V6_ALGO_IMAGE", "localhost:5000/strata-fit-v6-meta-algo:single-node-mice-v9"
+)
+V6_DATABASE_LABEL = os.getenv("V6_DATABASE_LABEL", "default")
+V6_TASK_TIMEOUT_S = int(os.getenv("V6_TASK_TIMEOUT_S", "1200"))
+
+
+# ============================================================================
+# Data generation and manifests
+# ============================================================================
+RUN_GENERATE_DATA = os.getenv("RUN_GENERATE_DATA", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+DATA_DIR = Path(os.getenv("DATA_DIR", "/tmp/meta_single_node_mice/data")).expanduser()
+MANIFEST_DIR = Path(
+    os.getenv("MANIFEST_DIR", "/tmp/meta_single_node_mice/manifests")
+).expanduser()
+
+DATA_NODE_COUNT = int(os.getenv("DATA_NODE_COUNT", "1"))
+DATA_PATIENTS_PER_NODE = int(os.getenv("DATA_PATIENTS_PER_NODE", "24"))
+DATA_ROWS_PER_NODE = int(os.getenv("DATA_ROWS_PER_NODE", "100"))
+DATA_SEED = int(os.getenv("DATA_SEED", "20260318"))
+DATA_MAX_ATTEMPTS = int(os.getenv("DATA_MAX_ATTEMPTS", "20"))
+DATA_MIN_C_INDEX = float(os.getenv("DATA_MIN_C_INDEX", "0.60"))
+DATA_MAX_LOGRANK_P = float(os.getenv("DATA_MAX_LOGRANK_P", "0.10"))
+PYTHON_BIN = os.getenv("PYTHON_BIN", sys.executable)
+
+
+# ============================================================================
+# Model/runtime parameters
+# ============================================================================
+IMPUTATION_STRATEGY = os.getenv("IMPUTATION_STRATEGY", "mice").strip() or "mice"
+IMPUTATION_COLUMNS = [
+    value.strip()
+    for value in os.getenv("IMPUTATION_COLUMNS", ",".join(DEFAULT_IMPUTATION_COLUMNS)).split(",")
+    if value.strip()
+] or list(DEFAULT_IMPUTATION_COLUMNS)
+COX_EXPL_VARS = [
+    value.strip()
+    for value in os.getenv("COX_EXPL_VARS", ",".join(DEFAULT_COX_EXPL_VARS)).split(",")
+    if value.strip()
+] or list(DEFAULT_COX_EXPL_VARS)
+
+KM_TASK_NAME = os.getenv("KM_TASK_NAME", "meta-km-1node-mice-federated-run")
+COX_TASK_NAME = os.getenv("COX_TASK_NAME", "meta-cox-1node-mice-federated-run")
+
+
+def _is_placeholder(value: str) -> bool:
+    value = value.strip()
+    return value.startswith("<") and value.endswith(">")
+
+
+def _assert_required_constants() -> None:
+    required = {
+        "V6_SERVER_HOST": V6_SERVER_HOST,
+        "V6_USERNAME": V6_USERNAME,
+        "V6_PASSWORD": V6_PASSWORD,
+        "V6_ALGO_IMAGE": V6_ALGO_IMAGE,
+        "V6_DATABASE_LABEL": V6_DATABASE_LABEL,
+    }
+    missing = [
+        key
+        for key, value in required.items()
+        if not str(value).strip() or _is_placeholder(str(value))
+    ]
+    if missing:
+        raise ValueError(
+            "Missing required configuration values: "
+            + ", ".join(missing)
+            + ". Fill constants at the top of this script or export env vars."
+        )
+
+    if not V6_ORGANIZATION_IDS:
+        raise ValueError("V6_ORGANIZATION_IDS must contain at least one organization id")
+
+
+def _authenticate(client: Client) -> None:
+    if V6_MFA_CODE.strip():
+        client.authenticate(V6_USERNAME, V6_PASSWORD, mfa_code=V6_MFA_CODE)
+    else:
+        client.authenticate(V6_USERNAME, V6_PASSWORD)
+
+    if V6_USER_PRIVATE_KEY.strip():
+        client.setup_encryption(V6_USER_PRIVATE_KEY)
+    else:
+        client.setup_encryption(None)
+
+
+def _run_data_generation(data_manifest_path: Path) -> None:
     cmd = [
-        python_bin,
+        PYTHON_BIN,
         str(ROOT / "tests/infra/prepare_meta_smoke_data.py"),
         "--output-dir",
-        str(data_dir),
+        str(DATA_DIR),
         "--node-count",
-        str(node_count),
+        str(DATA_NODE_COUNT),
         "--patients-per-node",
-        str(patients_per_node),
+        str(DATA_PATIENTS_PER_NODE),
         "--rows-per-node",
-        str(rows_per_node),
+        str(DATA_ROWS_PER_NODE),
         "--seed",
-        str(seed),
+        str(DATA_SEED),
         "--max-attempts",
-        str(max_attempts),
+        str(DATA_MAX_ATTEMPTS),
         "--min-c-index",
-        str(min_c_index),
+        str(DATA_MIN_C_INDEX),
         "--max-logrank-p",
-        str(max_logrank_p),
+        str(DATA_MAX_LOGRANK_P),
         "--manifest-path",
-        str(manifest_path),
+        str(data_manifest_path),
     ]
     subprocess.run(cmd, check=True)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--python-bin", default=sys.executable)
-    parser.add_argument("--host", default="http://localhost")
-    parser.add_argument("--port", type=int, default=5070)
-    parser.add_argument("--api-path", default="/api")
-    parser.add_argument("--collaboration-name", default="meta-single-node-mice")
-    parser.add_argument("--image", required=True)
-    parser.add_argument("--node-name", default="alpha")
-    parser.add_argument("--timeout-s", type=int, default=1200)
-
-    parser.add_argument("--data-dir", default="/tmp/meta_single_node_mice_20260326/data")
-    parser.add_argument("--manifest-dir", default="/tmp/meta_single_node_mice_20260326/manifests")
-    parser.add_argument("--skip-generate", action="store_true")
-    parser.add_argument("--node-count", type=int, default=1)
-    parser.add_argument("--patients-per-node", type=int, default=24)
-    parser.add_argument("--rows-per-node", type=int, default=100)
-    parser.add_argument("--seed", type=int, default=20260318)
-    parser.add_argument("--max-attempts", type=int, default=20)
-    parser.add_argument("--min-c-index", type=float, default=0.60)
-    parser.add_argument("--max-logrank-p", type=float, default=0.10)
-
-    parser.add_argument(
-        "--imputation-columns",
-        default=",".join(DEFAULT_IMPUTATION_COLUMNS),
-        help="Comma-separated columns for MICE metrics/imputation.",
+def _create_task(
+    *,
+    client: Client,
+    task_name: str,
+    description: str,
+    input_: dict[str, Any],
+) -> dict[str, Any]:
+    payload = client.task.create(
+        collaboration=V6_COLLABORATION_ID,
+        organizations=[V6_MASTER_ORG_ID],
+        name=task_name,
+        image=V6_ALGO_IMAGE,
+        description=description,
+        input_=input_,
+        databases=[{"label": V6_DATABASE_LABEL}],
     )
-    parser.add_argument(
-        "--cox-expl-vars",
-        default=",".join(DEFAULT_COX_EXPL_VARS),
-        help="Comma-separated Cox explanatory variables.",
-    )
-    args = parser.parse_args()
+    if not isinstance(payload, dict) or payload.get("id") is None:
+        raise RuntimeError(f"Task creation failed for '{task_name}': {payload}")
+    return payload
 
-    data_dir = Path(args.data_dir).expanduser()
-    manifest_dir = Path(args.manifest_dir).expanduser()
-    manifest_dir.mkdir(parents=True, exist_ok=True)
-    data_manifest_path = manifest_dir / "run_manifest.json"
-    federated_result_path = manifest_dir / "federated_results.json"
 
-    if not args.skip_generate:
-        run_data_generation(
-            python_bin=args.python_bin,
-            data_dir=data_dir,
-            manifest_path=data_manifest_path,
-            node_count=args.node_count,
-            patients_per_node=args.patients_per_node,
-            rows_per_node=args.rows_per_node,
-            seed=args.seed,
-            max_attempts=args.max_attempts,
-            min_c_index=args.min_c_index,
-            max_logrank_p=args.max_logrank_p,
+def _assert_collaboration_membership(client: Client) -> None:
+    org_rows = client.organization.list(collaboration=V6_COLLABORATION_ID).get("data", [])
+    collab_org_ids = {int(row["id"]) for row in org_rows if row.get("id") is not None}
+
+    if V6_MASTER_ORG_ID not in collab_org_ids:
+        raise ValueError(
+            f"V6_MASTER_ORG_ID={V6_MASTER_ORG_ID} is not in collaboration id={V6_COLLABORATION_ID} "
+            f"organization ids {sorted(collab_org_ids)}"
         )
 
-    imputation_columns = parse_csv(args.imputation_columns, DEFAULT_IMPUTATION_COLUMNS)
-    cox_expl_vars = parse_csv(args.cox_expl_vars, DEFAULT_COX_EXPL_VARS)
+    missing = [org_id for org_id in V6_ORGANIZATION_IDS if org_id not in collab_org_ids]
+    if missing:
+        raise ValueError(
+            f"V6_ORGANIZATION_IDS contains ids not in collaboration id={V6_COLLABORATION_ID}: {missing}"
+        )
 
-    client = Client(args.host, args.port, args.api_path)
-    authenticate_node_user(client, args.node_name)
-    collab = next(
-        c for c in client.collaboration.list()["data"] if c["name"] == args.collaboration_name
-    )
-    org_map = {o["name"]: o["id"] for o in client.organization.list()["data"]}
-    org_ids = [org_map[args.node_name]]
+
+def main() -> None:
+    _assert_required_constants()
+
+    MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
+    data_manifest_path = MANIFEST_DIR / "run_manifest.json"
+    federated_result_path = MANIFEST_DIR / "federated_results.json"
+
+    if RUN_GENERATE_DATA:
+        _run_data_generation(data_manifest_path)
+
+    print("Connecting to Vantage6 server...")
+    client = Client(V6_SERVER_HOST, V6_SERVER_PORT, V6_API_PATH)
+    _authenticate(client)
+    _assert_collaboration_membership(client)
 
     summary: dict[str, Any] = {
-        "image": args.image,
-        "node_name": args.node_name,
-        "collaboration_name": args.collaboration_name,
-        "data_dir": str(data_dir),
+        "image": V6_ALGO_IMAGE,
+        "collaboration_id": V6_COLLABORATION_ID,
+        "master_org_id": V6_MASTER_ORG_ID,
+        "organization_ids": V6_ORGANIZATION_IDS,
+        "data_dir": str(DATA_DIR),
         "data_manifest_path": str(data_manifest_path),
     }
 
-    km_task, km_master = create_task_with_master_fallback(
+    km_task = _create_task(
         client=client,
-        collab_id=collab["id"],
-        master_candidates=[args.node_name],
-        org_map=org_map,
-        name="meta-km-1node-mice-federated-run",
-        image=args.image,
+        task_name=KM_TASK_NAME,
         description="KM federated run",
         input_=_build_km_input(
-            org_ids,
-            imputation_columns=imputation_columns,
-            imputation_strategy="mice",
+            V6_ORGANIZATION_IDS,
+            imputation_columns=IMPUTATION_COLUMNS,
+            imputation_strategy=IMPUTATION_STRATEGY,
         ),
     )
-    km_task_id = km_task["id"]
-    km_status = wait_for_terminal(client, km_task_id, args.timeout_s)
+    km_task_id = int(km_task["id"])
+    km_status = wait_for_terminal(client, km_task_id, V6_TASK_TIMEOUT_S)
+    if km_status != "completed":
+        raise RuntimeError(f"KM task {km_task_id} finished with status '{km_status}'")
+
     km_decoded = fetch_decoded_result(client, km_task_id)
     assert_all_child_runs_completed(client, km_task_id)
     km_curve = pd.read_json(StringIO(km_decoded["final_result"]["km_curve"]))
@@ -173,30 +257,28 @@ def main() -> None:
     summary["km"] = {
         "task_id": km_task_id,
         "status": km_status,
-        "master": km_master,
         "final_model": km_decoded.get("final_model"),
         "rows": int(len(km_curve)),
         "final_cumulative_incidence": float(km_curve["cumulative_incidence"].iloc[-1]),
         "included_organizations": km_decoded["final_result"].get("included_organizations", []),
     }
 
-    cox_task, cox_master = create_task_with_master_fallback(
+    cox_task = _create_task(
         client=client,
-        collab_id=collab["id"],
-        master_candidates=[args.node_name],
-        org_map=org_map,
-        name="meta-cox-1node-mice-federated-run",
-        image=args.image,
+        task_name=COX_TASK_NAME,
         description="Cox federated run",
         input_=_build_cox_input(
-            org_ids,
-            imputation_columns=imputation_columns,
-            imputation_strategy="mice",
-            cox_expl_vars=cox_expl_vars,
+            V6_ORGANIZATION_IDS,
+            imputation_columns=IMPUTATION_COLUMNS,
+            imputation_strategy=IMPUTATION_STRATEGY,
+            cox_expl_vars=COX_EXPL_VARS,
         ),
     )
-    cox_task_id = cox_task["id"]
-    cox_status = wait_for_terminal(client, cox_task_id, args.timeout_s)
+    cox_task_id = int(cox_task["id"])
+    cox_status = wait_for_terminal(client, cox_task_id, V6_TASK_TIMEOUT_S)
+    if cox_status != "completed":
+        raise RuntimeError(f"Cox task {cox_task_id} finished with status '{cox_status}'")
+
     cox_decoded = fetch_decoded_result(client, cox_task_id)
     assert_all_child_runs_completed(client, cox_task_id)
     cox_model = pd.read_json(StringIO(cox_decoded["final_result"]["model"])).sort_index()
@@ -205,7 +287,6 @@ def main() -> None:
     summary["cox"] = {
         "task_id": cox_task_id,
         "status": cox_status,
-        "master": cox_master,
         "final_model": cox_decoded.get("final_model"),
         "included_organizations": cox_decoded["final_result"].get("included_organizations", []),
         "overall_p_value": float(cox_decoded["final_result"].get("overall_p_value")),
