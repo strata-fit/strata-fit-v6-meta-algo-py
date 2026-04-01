@@ -145,7 +145,13 @@ def _impute_locally(
 ) -> pd.DataFrame:
     imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
-    return imputer.impute(df.copy(), global_metrics)
+    payload = imputer.impute(df.copy(), global_metrics)
+    if isinstance(payload, dict):
+        return pd.DataFrame(payload)
+    raise DataContractError(
+        "Imputation output must be a JSON-serializable dictionary",
+        meta={"payload_type": type(payload).__name__},
+    )
 
 
 def _resolve_linear_model_class(model_class: Any) -> type[BaseEstimator]:
@@ -215,9 +221,17 @@ def _train_local_sklearn_linear(
     model_kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
     model_cls = _resolve_linear_model_class(model_class)
-    working = df.dropna(how="any")
-    X = working[predictors].values
-    y = working[outcome].values
+    required_columns = list(dict.fromkeys([*predictors, outcome]))
+    missing = [column for column in required_columns if column not in df.columns]
+    if missing:
+        raise DataContractError(
+            "Missing required columns for sklearn-linear training",
+            meta={"missing_columns": missing},
+        )
+
+    working = df[required_columns].dropna(how="any")
+    X = working[predictors].to_numpy()
+    y = working[outcome].to_numpy()
 
     if X.shape[0] == 0:
         raise DataContractError("No rows available for sklearn-linear training after imputation")
@@ -280,7 +294,23 @@ def imputation_compute_partial_handler(
     strategy = _coerce_strategy(data.imputation_strategy)
     imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
-    return imputer.compute(df, data.columns).to_dict()
+    payload = imputer.compute(df, data.columns)
+
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, pd.DataFrame):
+        return payload.to_dict()
+
+    to_dict = getattr(payload, "to_dict", None)
+    if callable(to_dict):
+        converted = to_dict()
+        if isinstance(converted, dict):
+            return converted
+
+    raise DataContractError(
+        "imputation_compute_partial must return a dictionary payload",
+        meta={"payload_type": type(payload).__name__},
+    )
 
 
 def impute_and_train_sklearn_linear_handler(
@@ -627,6 +657,17 @@ def _run_cox_with_imputation(
                 unique_time_events = aggregated_time_events[config.time_col].tolist()
             break
 
+    if not unique_time_events:
+        raise DataContractError(
+            "No unique event times returned by Cox partial tasks",
+            meta={
+                "included_organizations": ids,
+                "excluded_organizations": excluded_ids,
+                "time_col": config.time_col,
+                "outcome_col": config.outcome_col,
+            },
+        )
+
     z_results = runner.run(
         summed_z_step,
         {
@@ -668,13 +709,40 @@ def _run_cox_with_imputation(
         summed_agg3 = np.zeros((n_times, n_covs, n_covs), dtype=float)
 
         for output in results:
-            summed_agg1 += np.asarray(output["agg1"], dtype=float)
+            agg1 = np.asarray(output.get("agg1", []), dtype=float)
+            if agg1.shape == (n_times,):
+                summed_agg1 += agg1
+            elif agg1.size != 0:
+                raise DataContractError(
+                    "Invalid Cox agg1 shape from partial output",
+                    meta={"expected_shape": (n_times,), "received_shape": agg1.shape},
+                )
 
             agg2_df = pd.DataFrame.from_dict(output["agg2"])
             agg2_df = agg2_df.reindex(columns=config.expl_vars)
-            summed_agg2 += agg2_df.to_numpy(dtype=float)
+            agg2 = agg2_df.to_numpy(dtype=float)
+            if agg2.shape == (n_times, n_covs):
+                summed_agg2 += agg2
+            elif agg2.size != 0:
+                raise DataContractError(
+                    "Invalid Cox agg2 shape from partial output",
+                    meta={
+                        "expected_shape": (n_times, n_covs),
+                        "received_shape": agg2.shape,
+                    },
+                )
 
-            summed_agg3 += np.asarray(output["agg3"], dtype=float)
+            agg3 = np.asarray(output.get("agg3", []), dtype=float)
+            if agg3.shape == (n_times, n_covs, n_covs):
+                summed_agg3 += agg3
+            elif agg3.size != 0:
+                raise DataContractError(
+                    "Invalid Cox agg3 shape from partial output",
+                    meta={
+                        "expected_shape": (n_times, n_covs, n_covs),
+                        "received_shape": agg3.shape,
+                    },
+                )
 
         primary_derivative, secondary_derivative = compute_derivatives(
             summed_agg1=summed_agg1,
