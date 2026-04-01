@@ -12,11 +12,11 @@ license = {text = "Proprietary"}
 authors = [{name = "Strata-Fit Team"}]
 dependencies = [
     "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz",
-    "coxph @ https://github.com/strata-fit/v6-coxph-py/archive/e0e8a98b68207c0e3756628a975dc8a2cfa95f5f.tar.gz",
+    "coxph @ https://github.com/strata-fit/v6-coxph-py/archive/3eaf0b45063e54ddbacb7a585029e2a31f8c8713.tar.gz",
     "v6_sklearn_linear_py @ https://github.com/strata-fit/strata-fit-v6-sklearn-linear-py/archive/c9d9fc2faf0f4f27224cf786b7979a9f2a4662ce.tar.gz",
-    "strata_fit_v6_km_py @ https://github.com/strata-fit/strata-fit-v6-km-py/archive/4d1cc2fcc623a39da33d8a821a15c6a60de01397.tar.gz",
-    "strata-fit-v6-imputation-py @ https://github.com/strata-fit/strata-fit-v6-imputation-py/archive/0db3b1d023505b5f196320ff6d2fcb5ce29aafa8.tar.gz",
-    "strata_fit_v6_data_validator_py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz",
+    "strata_fit_v6_km_py @ https://github.com/strata-fit/strata-fit-v6-km-py/archive/9d88241bc67394412a2b6c099c8dfe30802544c9.tar.gz",
+    "strata-fit-v6-imputation-py @ https://github.com/strata-fit/strata-fit-v6-imputation-py/archive/88219d1bef568813e4aa879c490aaabcde9bf974.tar.gz",
+    "strata_fit_v6_data_validator_py @ https://github.com/strata-fit/strata-fit-data-schema/archive/b94c3c8e887a5ac551b33ea041f564a0589628ee.tar.gz",
 
     "pandas>=2.1.4",
     "numpy>=1.26.0",
