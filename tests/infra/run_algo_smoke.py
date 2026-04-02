@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import requests
 from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 from vantage6.client import Client
 
@@ -62,8 +63,18 @@ def decode_result(value: Any) -> Any:
 def wait_for_terminal(client: Client, task_id: int, timeout_s: int) -> str:
     status = None
     deadline = time.time() + timeout_s
+    poll_attempt = 0
     while time.time() < deadline:
-        current = client.task.get(task_id).get("status")
+        poll_attempt += 1
+        current = _fetch_task_status(client, task_id, timeout_s=15)
+        if current is None:
+            remaining = int(max(0, deadline - time.time()))
+            print(
+                f"task {task_id} status poll transiently failed on attempt {poll_attempt}; "
+                f"retrying ({remaining}s left)"
+            )
+            time.sleep(2)
+            continue
         if current != status:
             print(f"task {task_id} status: {current}")
             status = current
@@ -71,6 +82,33 @@ def wait_for_terminal(client: Client, task_id: int, timeout_s: int) -> str:
             return current
         time.sleep(2)
     raise TimeoutError(f"Task {task_id} did not finish before timeout")
+
+
+def _fetch_task_status(client: Client, task_id: int, timeout_s: int = 15) -> str | None:
+    """Fetch task status with bounded transport retries.
+
+    The default client retry loop can retry TLS/connection failures forever.
+    For smoke polling we prefer bounded retries so the outer timeout remains
+    effective and transient network issues do not stall the script.
+    """
+    endpoint = client.generate_path_to(f"task/{task_id}", is_for_algorithm_store=False)
+    try:
+        response = requests.get(endpoint, headers=client.headers, timeout=timeout_s)
+        response.raise_for_status()
+        payload = response.json()
+    except (
+        requests.exceptions.ConnectionError,
+        requests.exceptions.SSLError,
+        requests.exceptions.Timeout,
+        requests.exceptions.HTTPError,
+        ValueError,
+    ):
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    status = payload.get("status")
+    return str(status) if status is not None else None
 
 
 def get_child_tasks(client: Client, parent_task_id: int) -> list[dict[str, Any]]:
