@@ -27,6 +27,18 @@ git clone https://github.com/mdw-nl/v6-infrastructure-sh.git
     decoded result payload, child run completion, and mock-vs-infra similarity for Cox/KM.
 - `run_local_infra_smoke.sh`:
   - End-to-end wrapper: preflight/up/build/push/task-smoke/infra-test/down.
+  - Uses GHCR infra images directly by default.
+  - Supports optional local mirroring for best-effort arm64 developer runs.
+
+The CI infra lane builds on this wrapper. The default signoff path is:
+
+- `baseline_3n_full`
+
+Set `V6_INFRA_PROFILE=full` to expand back to:
+
+- `fanout_5n_survival`
+- `fanout_8n_km`
+- `fanout_8n_cox`
 
 ## Quick start
 
@@ -40,17 +52,18 @@ Expected layout defaults:
 
 - Algorithm repo: current directory
 - Infra harness repo: `../v6-infrastructure-sh`
-- Python: `../.venv/bin/python`
+- Python: provide `PYTHON_BIN` explicitly, or let the CI lane bootstrap a `/tmp` venv
 
 ## Useful overrides
 
 ```bash
 INFRA_DIR=/path/to/v6-infrastructure-sh \
-PYTHON_BIN=/path/to/python \
+PYTHON_BIN=/path/to/venv/bin/python \
 V6_NODE_COUNT=4 \
 V6_PATIENTS_PER_NODE=40 \
 V6_LOCAL_REGISTRY_PORT=5002 \
-V6_SKIP_BUILD_PUSH=true \
+V6_MIRROR_INFRA_IMAGES=true \
+DOCKER_REGISTRY=localhost:5002/v6infra \
 V6_ALGO_TAG=dev \
 V6_COLLABORATION_NAME=meta-ci \
 tests/infra/run_local_infra_smoke.sh
@@ -62,3 +75,5 @@ Notes:
 - The runner does not overwrite `v6-infrastructure-sh/infrastructure/config.env`.
 - Set `V6_SKIP_BUILD_PUSH=true` to reuse an already-pushed local image tag.
 - Set `V6_RUN_LINEAR=false` if you only want the raw-data survival pipeline (`cox` + `km`).
+- Authoritative infra validation is expected to run on amd64 CI.
+- When a task fails in infra, start by attaching to the master org node container and checking the Python traceback there.

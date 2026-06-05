@@ -19,7 +19,6 @@ permissions:
   packages: write
 
 jobs:
-
   lint-and-test:
     name: Lint and Test
     runs-on: ubuntu-latest
@@ -43,8 +42,57 @@ jobs:
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
 
+  validation-baseline:
+    name: Validation Baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout infra harness
+        uses: actions/checkout@v4
+        with:
+          repository: mdw-nl/v6-infrastructure-sh
+          ref: 3133deb74a30fe34617d69d94628bbff38c71869
+          path: tools/v6-infra
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Docker info
+        run: docker info
+
+      - name: Clean environment validation
+        run: PYTHON_BOOTSTRAP=python3 bash scripts/ci/clean_env_validate.sh
+
+      - name: Local stress matrix
+        run: python3 scripts/ci/stress_matrix.py
+
+      - name: Infra baseline validation
+        run: |
+          INFRA_DIR="$GITHUB_WORKSPACE/tools/v6-infra" \
+          PYTHON_BOOTSTRAP=python3 \
+          V6_INFRA_PROFILE=baseline \
+          bash scripts/ci/run_infra_lane.sh
+
+      - name: Validation report
+        if: always()
+        run: python3 scripts/ci/report_summary.py
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-artifacts
+          path: ARTIFACTS/validation
+
   build-and-push:
     name: Build and Push Docker Image
+    needs: [lint-and-test, validation-baseline]
     if: startsWith(github.ref, 'refs/tags/release/v') || github.ref == 'refs/tags/dev'
     runs-on: ubuntu-latest
 

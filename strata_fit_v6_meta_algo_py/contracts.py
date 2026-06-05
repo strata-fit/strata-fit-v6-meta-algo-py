@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, RootModel
 
-from strata_fit_v6_imputation_py.imputation_strategies.base import ImputationStrategyEnum
+from .imputation import ImputationStrategyEnum
 
 
 class FinalModelEnum(str, Enum):

@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 import time
 from io import StringIO
 from pathlib import Path
@@ -13,8 +14,13 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from vantage6.algorithm.tools.mock_client import MockAlgorithmClient
 from vantage6.client import Client
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from strata_fit_v6_meta_algo_py import run_local_meta_algorithm
 
 TERMINAL_STATUSES = {
     "completed",
@@ -252,43 +258,57 @@ def _build_mock_reference(
     imputation_strategy: str,
     cox_expl_vars: list[str],
 ) -> dict[str, dict[str, Any]]:
-    datasets = [[{"database": path, "db_type": "csv"}] for path in data_paths]
-    mock_client = MockAlgorithmClient(datasets=datasets, module="strata_fit_v6_meta_algo_py")
-    org_ids = [organization["id"] for organization in mock_client.organization.list()]
+    datasets = [pd.read_csv(path) for path in data_paths]
 
     out: dict[str, dict[str, Any]] = {}
     if run_linear:
-        task = mock_client.task.create(
-            input_=_build_linear_input(
-                org_ids,
-                imputation_columns=imputation_columns,
-                imputation_strategy=imputation_strategy,
-            ),
-            organizations=[org_ids[0]],
+        out["sklearn_linear"] = run_local_meta_algorithm(
+            datasets,
+            columns=imputation_columns,
+            run_validation=True,
+            imputation_strategy=imputation_strategy,
+            final_model="sklearn_linear",
+            final_model_config={
+                "predictors": ["Age_diagnosis", "DAS28", "CRP", "HAQ"],
+                "outcome": "RF_positivity",
+                "n_local_iterations": 25,
+                "model_kwargs": {"solver": "lbfgs"},
+            },
         )
-        out["sklearn_linear"] = mock_client.result.get(task["id"])
     if run_cox:
-        task = mock_client.task.create(
-            input_=_build_cox_input(
-                org_ids,
-                imputation_columns=imputation_columns,
-                imputation_strategy=imputation_strategy,
-                cox_expl_vars=cox_expl_vars,
-            ),
-            organizations=[org_ids[0]],
+        out["cox"] = run_local_meta_algorithm(
+            datasets,
+            columns=imputation_columns,
+            run_validation=True,
+            imputation_strategy=imputation_strategy,
+            final_model="cox",
+            final_model_config={
+                "time_col": "time",
+                "outcome_col": "event",
+                "expl_vars": cox_expl_vars,
+                "max_iterations": 12,
+                "tolerance": 1e-6,
+                "preprocess_raw_data": True,
+            },
         )
-        out["cox"] = mock_client.result.get(task["id"])
     if run_km:
-        task = mock_client.task.create(
-            input_=_build_km_input(
-                org_ids,
-                imputation_columns=imputation_columns,
-                imputation_strategy=imputation_strategy,
-            ),
-            organizations=[org_ids[0]],
+        out["km"] = run_local_meta_algorithm(
+            datasets,
+            columns=imputation_columns,
+            run_validation=True,
+            imputation_strategy=imputation_strategy,
+            final_model="km",
+            final_model_config={
+                "preprocess_raw_data": True,
+            },
         )
-        out["km"] = mock_client.result.get(task["id"])
     return out
+
+
+def _write_artifact(path: str, payload: dict[str, Any]) -> None:
+    artifact_path = Path(path).expanduser()
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _assert_cox_similarity(mock_result: dict[str, Any], infra_result: dict[str, Any]) -> None:
@@ -337,6 +357,9 @@ def main() -> None:
     run_linear = env_bool("V6_RUN_LINEAR", True)
     run_cox = env_bool("V6_RUN_COX", True)
     run_km = env_bool("V6_RUN_KM", True)
+    scenario_name = os.getenv("V6_SCENARIO_NAME", "infra_smoke")
+    result_artifact = os.getenv("V6_RESULT_ARTIFACT", "").strip()
+    data_manifest_path = os.getenv("V6_DATA_MANIFEST_PATH", "").strip()
     imputation_strategy = os.getenv("V6_IMPUTATION_STRATEGY", "mean").strip() or "mean"
     imputation_columns = env_csv("V6_IMPUTATION_COLUMNS", IMPUTATION_COLUMNS)
     cox_expl_vars = env_csv("V6_COX_EXPL_VARS", COX_EXPL_VARS)
@@ -392,6 +415,20 @@ def main() -> None:
 
     collab_id = collab["id"]
     org_ids = [org_map[name] for name in selected]
+    summary: dict[str, Any] = {
+        "scenario": scenario_name,
+        "status": "pass",
+        "image": image,
+        "node_count": node_count,
+        "selected_nodes": selected,
+        "organization_ids": org_ids,
+        "run_linear": run_linear,
+        "run_cox": run_cox,
+        "run_km": run_km,
+        "imputation_strategy": imputation_strategy,
+        "data_manifest_path": data_manifest_path,
+        "tasks": {},
+    }
 
     if run_linear:
         task, master = create_task_with_master_fallback(
@@ -419,6 +456,12 @@ def main() -> None:
             raise RuntimeError(f"Linear task {task_id} wrong final_model: {decoded.get('final_model')}")
 
         assert_all_child_runs_completed(client, task_id)
+        summary["tasks"]["sklearn_linear"] = {
+            "task_id": task_id,
+            "status": status,
+            "final_model": decoded.get("final_model"),
+            "child_runs_completed": True,
+        }
         print(f"linear task {task_id} validated")
 
     if run_cox:
@@ -449,6 +492,13 @@ def main() -> None:
 
         _assert_cox_similarity(mock_results["cox"], decoded)
         assert_all_child_runs_completed(client, task_id)
+        summary["tasks"]["cox"] = {
+            "task_id": task_id,
+            "status": status,
+            "final_model": decoded.get("final_model"),
+            "child_runs_completed": True,
+            "included_organizations": decoded.get("final_result", {}).get("included_organizations", []),
+        }
         print(f"cox task {task_id} validated and matched mock baseline")
 
     if run_km:
@@ -478,8 +528,17 @@ def main() -> None:
 
         _assert_km_similarity(mock_results["km"], decoded)
         assert_all_child_runs_completed(client, task_id)
+        summary["tasks"]["km"] = {
+            "task_id": task_id,
+            "status": status,
+            "final_model": decoded.get("final_model"),
+            "child_runs_completed": True,
+            "included_organizations": decoded.get("final_result", {}).get("included_organizations", []),
+        }
         print(f"km task {task_id} validated and matched mock baseline")
 
+    if result_artifact:
+        _write_artifact(result_artifact, summary)
     print("meta-algo infra smoke tasks completed")
 
 
