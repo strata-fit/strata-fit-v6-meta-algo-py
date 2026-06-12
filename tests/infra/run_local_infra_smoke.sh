@@ -2,8 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Default assumes a sibling checkout like:
+#   /path/to/strata-fit-v6-meta-algo-py
+#   /path/to/v6-infrastructure-sh
+# Override INFRA_DIR explicitly when your workspace layout differs.
 INFRA_DIR="${INFRA_DIR:-$ROOT_DIR/../v6-infrastructure-sh}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+TESTED_INFRA_COMMIT="${V6_TESTED_INFRA_COMMIT:-3133deb74a30fe34617d69d94628bbff38c71869}"
+TESTED_VERSION_VANTAGE6="${V6_TESTED_VERSION_VANTAGE6:-4.14.0}"
+TESTED_INFRA_IMAGE_TAG="${V6_TESTED_INFRA_IMAGE_TAG:-4.14.0-rc8}"
 
 NODE_COUNT="${V6_NODE_COUNT:-3}"
 REGISTRY_PORT="${V6_LOCAL_REGISTRY_PORT:-5001}"
@@ -35,15 +42,65 @@ else
 fi
 
 if [ ! -d "$INFRA_DIR/infrastructure" ]; then
-  echo "v6-infrastructure-sh not found at: $INFRA_DIR" >&2
+  cat >&2 <<EOF
+v6-infrastructure-sh not found at: $INFRA_DIR
+
+Before running local infra smoke tests, make sure:
+  1. the harness repo is cloned or updated locally
+  2. INFRA_DIR points at that checkout
+
+Example:
+  git clone https://github.com/mdw-nl/v6-infrastructure-sh.git /path/to/v6-infrastructure-sh
+  INFRA_DIR=/path/to/v6-infrastructure-sh tests/infra/run_local_infra_smoke.sh
+
+Notes:
+  - this script reads INFRA_DIR
+  - current ROOT_DIR is: $ROOT_DIR
+EOF
   exit 1
 fi
+
+warn_if_version_drift() {
+  local current_infra_commit=""
+
+  if git -C "$INFRA_DIR" rev-parse HEAD >/dev/null 2>&1; then
+    current_infra_commit="$(git -C "$INFRA_DIR" rev-parse HEAD)"
+    if [ "$current_infra_commit" != "$TESTED_INFRA_COMMIT" ]; then
+      cat >&2 <<EOF
+[meta-smoke] advisory: local v6-infrastructure-sh checkout differs from the commit used in the tested CI lane.
+  current: $current_infra_commit
+  tested : $TESTED_INFRA_COMMIT
+
+The run will continue, but if infra behaves unexpectedly, first retry with:
+  git -C "$INFRA_DIR" fetch origin
+  git -C "$INFRA_DIR" checkout "$TESTED_INFRA_COMMIT"
+EOF
+    fi
+  fi
+
+  if [ "${VERSION_VANTAGE6:-}" != "$TESTED_VERSION_VANTAGE6" ]; then
+    echo "[meta-smoke] advisory: VERSION_VANTAGE6=${VERSION_VANTAGE6:-unset} but the tested baseline used ${TESTED_VERSION_VANTAGE6}" >&2
+  fi
+
+  if [ "${V6_SERVER_IMAGE_TAG:-}" != "$TESTED_INFRA_IMAGE_TAG" ]; then
+    echo "[meta-smoke] advisory: V6_SERVER_IMAGE_TAG=${V6_SERVER_IMAGE_TAG:-unset} but the tested baseline used ${TESTED_INFRA_IMAGE_TAG}" >&2
+  fi
+
+  if [ "${V6_NODE_IMAGE_TAG:-}" != "$TESTED_INFRA_IMAGE_TAG" ]; then
+    echo "[meta-smoke] advisory: V6_NODE_IMAGE_TAG=${V6_NODE_IMAGE_TAG:-unset} but the tested baseline used ${TESTED_INFRA_IMAGE_TAG}" >&2
+  fi
+
+  if [ "${V6_UI_IMAGE_TAG:-}" != "$TESTED_INFRA_IMAGE_TAG" ]; then
+    echo "[meta-smoke] advisory: V6_UI_IMAGE_TAG=${V6_UI_IMAGE_TAG:-unset} but the tested baseline used ${TESTED_INFRA_IMAGE_TAG}" >&2
+  fi
+}
 
 TMP_DIR="$(mktemp -d)"
 DATA_DIR="$TMP_DIR/data"
 NODES_ENV="$TMP_DIR/nodes.env"
 DATA_MANIFEST_PATH="${V6_DATA_MANIFEST_PATH:-$TMP_DIR/run_manifest.json}"
 RESULT_ARTIFACT="${V6_RESULT_ARTIFACT:-}"
+BOOTSTRAP_ENV_DIR="$TMP_DIR/meta-smoke-env"
 PYTHON_INTERPRETER="$PYTHON_BIN"
 VENV_PATH="$PYTHON_ENV_ROOT"
 NODES_CONFIG="$NODES_ENV"
@@ -67,6 +124,34 @@ UI_SOURCE_IMAGE="${V6_UI_SOURCE_IMAGE:-ghcr.io/mdw-nl/vantage6/infrastructure/ui
 INFRA_SOURCE_PLATFORM="${V6_INFRA_SOURCE_PLATFORM:-linux/amd64}"
 MIRROR_INFRA_IMAGES="${V6_MIRROR_INFRA_IMAGES:-false}"
 
+python_has_smoke_dependencies() {
+  "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+import numpy
+import pandas
+import pyarrow
+import requests
+import jwt
+import pydantic
+import sklearn
+PY
+}
+
+ensure_python_ready() {
+  if python_has_smoke_dependencies; then
+    return
+  fi
+
+  echo "[meta-smoke] selected interpreter lacks smoke-test dependencies; bootstrapping disposable env in $BOOTSTRAP_ENV_DIR"
+  PYTHON_BOOTSTRAP="$PYTHON_BIN" \
+    bash "$ROOT_DIR/scripts/ci/bootstrap_meta_env.sh" "$BOOTSTRAP_ENV_DIR"
+  PYTHON_BIN="$BOOTSTRAP_ENV_DIR/bin/python"
+  PYTHON_ENV_ROOT="$BOOTSTRAP_ENV_DIR"
+  PYTHON_INTERPRETER="$PYTHON_BIN"
+  VENV_PATH="$PYTHON_ENV_ROOT"
+}
+
+ensure_python_ready
+
 echo "[meta-smoke] generating synthetic data"
 "$PYTHON_BIN" "$ROOT_DIR/tests/infra/prepare_meta_smoke_data.py" \
   --output-dir "$DATA_DIR" \
@@ -81,6 +166,8 @@ set -a
 # shellcheck source=/dev/null
 source "$ROOT_DIR/tests/infra/config.env"
 set +a
+
+warn_if_version_drift
 
 PYTHON_INTERPRETER="$PYTHON_BIN"
 VENV_PATH="$PYTHON_ENV_ROOT"

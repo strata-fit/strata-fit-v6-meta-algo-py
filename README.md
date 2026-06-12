@@ -103,6 +103,24 @@ Both `clean_env_validate.sh` and `run_infra_lane.sh` bootstrap their own disposa
 
 The infra lane uses the external harness repo at `../v6-infrastructure-sh` by default and treats amd64 CI as the authoritative signoff environment.
 
+Before the quick start:
+
+- clone or update `v6-infrastructure-sh` locally
+- if that repo is not checked out at `../v6-infrastructure-sh`, set `INFRA_DIR` explicitly
+- ensure Docker is running
+- ensure `PYTHON_BIN` points to a usable interpreter when you are not using the CI scripts; if it lacks the smoke dependencies, the wrapper bootstraps a disposable `/tmp` env
+- for closest parity, use the tested harness commit `3133deb74a30fe34617d69d94628bbff38c71869`, `VERSION_VANTAGE6=4.14.0`, and infra image tag `4.14.0-rc8`
+
+Example setup when the harness lives elsewhere:
+
+```bash
+git clone https://github.com/mdw-nl/v6-infrastructure-sh.git /path/to/v6-infrastructure-sh
+git -C /path/to/v6-infrastructure-sh checkout 3133deb74a30fe34617d69d94628bbff38c71869
+INFRA_DIR=/path/to/v6-infrastructure-sh \
+PYTHON_BIN=/path/to/venv/bin/python \
+tests/infra/run_local_infra_smoke.sh
+```
+
 Quick start:
 
 ```bash
@@ -116,14 +134,17 @@ INFRA_DIR=/path/to/v6-infrastructure-sh \
 PYTHON_BIN=/path/to/venv/bin/python \
 V6_NODE_COUNT=5 \
 V6_PATIENTS_PER_NODE=36 \
-V6_LOCAL_REGISTRY_PORT=5002 \
+V6_LOCAL_REGISTRY_PORT=5001 \
 V6_INFRA_PROFILE=full \
 V6_MIRROR_INFRA_IMAGES=true \
-DOCKER_REGISTRY=localhost:5002/v6infra \
+DOCKER_REGISTRY=localhost:5001/v6infra \
 V6_ALGO_TAG=dev \
 tests/infra/run_local_infra_smoke.sh
 ```
 
 If infra tasks fail, inspect the master org node container first; that is the fastest place to see the real Python traceback from the algorithm process.
+
+The local smoke wrapper prints advisory warnings when your local harness commit or Vantage6/image versions differ from the originally tested baseline, but it does not block the run.
+If the selected interpreter is too bare for the smoke scripts, the wrapper bootstraps a disposable `/tmp` env before generating synthetic data.
 
 On arm64 developer machines, local infra should be considered best-effort only. The published `server-lite` and `node-lite` images are signoff-tested on amd64 CI.
