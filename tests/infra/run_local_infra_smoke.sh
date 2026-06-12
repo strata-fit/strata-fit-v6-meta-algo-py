@@ -11,6 +11,8 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 TESTED_INFRA_COMMIT="${V6_TESTED_INFRA_COMMIT:-3133deb74a30fe34617d69d94628bbff38c71869}"
 TESTED_VERSION_VANTAGE6="${V6_TESTED_VERSION_VANTAGE6:-4.14.0}"
 TESTED_INFRA_IMAGE_TAG="${V6_TESTED_INFRA_IMAGE_TAG:-4.14.0-rc8}"
+MIN_PYTHON_MAJOR=3
+MIN_PYTHON_MINOR=10
 
 NODE_COUNT="${V6_NODE_COUNT:-3}"
 REGISTRY_PORT="${V6_LOCAL_REGISTRY_PORT:-5001}"
@@ -33,6 +35,45 @@ fi
 if [ ! -x "$PYTHON_BIN" ]; then
   echo "Python interpreter not found/executable: $PYTHON_BIN" >&2
   exit 1
+fi
+
+python_is_usable() {
+  local candidate="$1"
+  [ -n "$candidate" ] || return 1
+  [ -x "$candidate" ] || return 1
+  "$candidate" - <<PY >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (${MIN_PYTHON_MAJOR}, ${MIN_PYTHON_MINOR}) else 1)
+PY
+}
+
+pick_fallback_python() {
+  local candidate=""
+
+  for candidate in \
+    "$(command -v python3 2>/dev/null || true)" \
+    "/home/debian/.pyenv/versions/3.12.0/bin/python" \
+    "/home/debian/.pyenv/versions/3.11.0/bin/python" \
+    "/home/debian/.pyenv/versions/3.10.0/bin/python" \
+    "/usr/bin/python3"; do
+    if python_is_usable "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+if ! python_is_usable "$PYTHON_BIN"; then
+  FALLBACK_PYTHON_BIN="$(pick_fallback_python || true)"
+  if [ -n "$FALLBACK_PYTHON_BIN" ]; then
+    echo "[meta-smoke][warn] Selected interpreter '$PYTHON_BIN' is not runnable or is below Python ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR}; falling back to '$FALLBACK_PYTHON_BIN'" >&2
+    PYTHON_BIN="$FALLBACK_PYTHON_BIN"
+  else
+    echo "No runnable Python >= ${MIN_PYTHON_MAJOR}.${MIN_PYTHON_MINOR} found for smoke bootstrap" >&2
+    exit 1
+  fi
 fi
 
 if [[ "$PYTHON_BIN" == */bin/* ]]; then
@@ -128,7 +169,6 @@ python_has_smoke_dependencies() {
   "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
 import numpy
 import pandas
-import pyarrow
 import requests
 import jwt
 import pydantic

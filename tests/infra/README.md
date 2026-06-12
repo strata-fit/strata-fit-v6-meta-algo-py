@@ -128,7 +128,9 @@ Notes:
 - The runner does not overwrite `v6-infrastructure-sh/infrastructure/config.env`.
 - The runner warns, but does not fail, when your local harness commit or Vantage6/image versions drift from the tested baseline.
 - If the selected `PYTHON_BIN` cannot import the smoke dependencies, the runner bootstraps a disposable env under `/tmp` before generating data.
+- On hosts where the locally available `server-lite` / `node-lite` images are amd64-only and Docker cannot execute them, the harness now fails fast with an architecture probe error before server startup.
 - Set `V6_SKIP_BUILD_PUSH=true` to reuse an already-pushed local image tag.
 - Set `V6_RUN_LINEAR=false` if you only want the raw-data survival pipeline (`cox` + `km`).
 - Authoritative infra validation is expected to run on amd64 CI.
+- A local `exec format error` from the Vantage6 infra images is an environment/architecture problem, not a meta-algorithm problem.
 - When a task fails in infra, start by attaching to the master org node container and checking the Python traceback there.

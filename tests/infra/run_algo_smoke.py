@@ -57,6 +57,11 @@ def env_csv(name: str, default: list[str]) -> list[str]:
     return parsed or list(default)
 
 
+def env_str(name: str, default: str) -> str:
+    raw = os.getenv(name)
+    return raw if raw is not None else default
+
+
 def decode_result(value: Any) -> Any:
     if value is None or isinstance(value, dict):
         return value
@@ -139,6 +144,14 @@ def authenticate_node_user(client: Client, node_name: str) -> None:
     client.setup_encryption(None)
 
 
+def authenticate_admin(client: Client) -> None:
+    client.authenticate(
+        env_str("V6_SERVER_USERNAME", "dev_admin"),
+        env_str("V6_SERVER_PASSWORD", "password"),
+    )
+    client.setup_encryption(None)
+
+
 def create_task_with_master_fallback(
     *,
     client: Client,
@@ -151,8 +164,8 @@ def create_task_with_master_fallback(
     input_: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
     errors: list[str] = []
+    authenticate_admin(client)
     for master in master_candidates:
-        authenticate_node_user(client, master)
         payload = client.task.create(
             collaboration=collab_id,
             organizations=[org_map[master]],
@@ -398,16 +411,14 @@ def main() -> None:
     collab = None
     org_map: dict[str, int] = {}
     bootstrap_errors: list[str] = []
-    for candidate in master_candidates:
-        try:
-            authenticate_node_user(client, candidate)
-            collab = next(
-                c for c in client.collaboration.list()["data"] if c["name"] == collaboration_name
-            )
-            org_map = {o["name"]: o["id"] for o in client.organization.list()["data"]}
-            break
-        except Exception as exc:  # pragma: no cover
-            bootstrap_errors.append(f"{candidate}: {exc}")
+    try:
+        authenticate_admin(client)
+        collab = next(
+            c for c in client.collaboration.list()["data"] if c["name"] == collaboration_name
+        )
+        org_map = {o["name"]: o["id"] for o in client.organization.list()["data"]}
+    except Exception as exc:  # pragma: no cover
+        bootstrap_errors.append(f"admin: {exc}")
 
     if collab is None:
         joined = "; ".join(bootstrap_errors) if bootstrap_errors else "no bootstrap attempts made"

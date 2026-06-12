@@ -12,7 +12,7 @@ license = { text = "Proprietary" }
 authors = [{name = "Strata-Fit Team"}]
 dependencies = [
     "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz",
-    "strata-fit-v6-data-validator-py @ git+https://github.com/strata-fit/strata-fit-data-schema.git@c77d319b6539bdc48314738981b5bde478d2bacd",
+    "strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz",
     "pydantic>=2.5.3",
     "pandas>=2.1.4",
     "numpy>=1.26.0",
@@ -21,11 +21,6 @@ dependencies = [
     "requests>=2.31.0",
     "PyJWT>=2.8.0",
     "dynaconf",
-    "fastapi",
-    "gunicorn",
-    "uvicorn",
-    "python-multipart",
-    "pyarrow",
 ]
 
 [project.optional-dependencies]
