@@ -73,6 +73,7 @@ Focused verification:
 
 ```bash
 .venv/bin/python -m pytest \
+  tests/test_d2t_preprocessing.py \
   tests/test_runtime.py \
   tests/test_local_runtime.py \
   tests/test_meta_mock_client.py \
@@ -81,21 +82,25 @@ Focused verification:
 
 ## Validation Harness
 
-Validation artifacts are written under `ARTIFACTS/validation/`.
+Validation artifacts are written under `ARTIFACTS/validation/`; security artifacts are written under `ARTIFACTS/security/`.
 
 - `scripts/ci/clean_env_validate.sh`
   Fresh venv, deterministic install order, import checks, focused pytest lane.
 - `scripts/ci/stress_matrix.py`
-  Local scenario matrix without infrastructure.
+  Local STRATA-FIT RA scenario matrix without infrastructure. Scenario artifacts are written to `ARTIFACTS/validation/meta_stress/`.
+- `scripts/ci/security_scan.sh`
+  Lightweight dependency/static/image scan. It fails only on obvious static surface regressions, high-confidence Bandit highs, or fixable high/critical image findings.
 - `scripts/ci/run_infra_lane.sh`
   `v6-infrastructure-sh` validation lane. By default it runs the amd64 signoff baseline:
-  - `baseline_3n_full`
+  - `dashboard_full_baseline`
   Set `V6_INFRA_PROFILE=full` to expand back to:
-  - `fanout_5n_survival`
+  - `site_heterogeneity_5n`
   - `fanout_8n_km`
   - `fanout_8n_cox`
 - `scripts/ci/run_full_validation.sh`
   Runs all lanes and writes `report.json` plus `report.md`.
+
+The stress matrix includes RA dashboard-style analyses for D2T survival, patient-reported burden, inflammation signal, treatment history, site heterogeneity, fan-out, high missingness, low-event edges, null-signal controls, and a small MICE smoke. The D2T gate verifies that events require all three operational criteria together: treatment history/duration, inflammatory activity, and patient/physician burden.
 
 Both `clean_env_validate.sh` and `run_infra_lane.sh` bootstrap their own disposable `/tmp` virtual environments so they do not mutate a working repo environment.
 
@@ -132,8 +137,7 @@ Useful overrides:
 ```bash
 INFRA_DIR=/path/to/v6-infrastructure-sh \
 PYTHON_BIN=/path/to/venv/bin/python \
-V6_NODE_COUNT=5 \
-V6_PATIENTS_PER_NODE=36 \
+V6_SCENARIO_NAME=site_heterogeneity_5n \
 V6_LOCAL_REGISTRY_PORT=5001 \
 V6_INFRA_PROFILE=full \
 V6_MIRROR_INFRA_IMAGES=true \

@@ -15,6 +15,7 @@ MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=10
 
 NODE_COUNT="${V6_NODE_COUNT:-3}"
+SCENARIO_NAME="${V6_SCENARIO_NAME:-infra_smoke}"
 REGISTRY_PORT="${V6_LOCAL_REGISTRY_PORT:-5001}"
 COLLAB_NAME="${V6_COLLABORATION_NAME:-meta-ci}"
 TASK_TIMEOUT_S="${V6_TASK_TIMEOUT_S:-1200}"
@@ -197,7 +198,8 @@ echo "[meta-smoke] generating synthetic data"
   --output-dir "$DATA_DIR" \
   --node-count "$NODE_COUNT" \
   --patients-per-node "${V6_PATIENTS_PER_NODE:-36}" \
-  --manifest-path "$DATA_MANIFEST_PATH"
+  --manifest-path "$DATA_MANIFEST_PATH" \
+  --scenario "$SCENARIO_NAME"
 
 echo "[meta-smoke] generating nodes.env"
 "$ROOT_DIR/tests/infra/generate_nodes_env.sh" "$NODE_COUNT" "$DATA_DIR" "$NODES_ENV"
@@ -295,6 +297,7 @@ V6_TASK_TIMEOUT_S="$TASK_TIMEOUT_S" \
 V6_DATA_DIR="$DATA_DIR" \
 V6_DATA_MANIFEST_PATH="$DATA_MANIFEST_PATH" \
 V6_RESULT_ARTIFACT="$RESULT_ARTIFACT" \
+V6_SCENARIO_NAME="$SCENARIO_NAME" \
 "$PYTHON_BIN" "$ROOT_DIR/tests/infra/run_algo_smoke.py"
 
 cd "$INFRA_DIR/infrastructure"

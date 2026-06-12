@@ -28,6 +28,8 @@ dev = [
     "pytest>=7.4",
     "pytest-mock>=3.10",
     "vantage6-client==4.14.0",
+    "pip-audit>=2.7",
+    "bandit>=1.7",
 ]
 
 [project.entry-points."run_context"]

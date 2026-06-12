@@ -21,6 +21,7 @@ run_lane() {
 
 run_lane "clean_env" env RUN_ID="$RUN_ID" ARTIFACT_DIR="$ARTIFACT_DIR" bash "$ROOT_DIR/scripts/ci/clean_env_validate.sh"
 run_lane "stress_matrix" env RUN_ID="$RUN_ID" ARTIFACT_DIR="$ARTIFACT_DIR" python3 "$ROOT_DIR/scripts/ci/stress_matrix.py"
+run_lane "security" env RUN_ID="$RUN_ID" ARTIFACT_DIR="$ARTIFACT_DIR" SECURITY_ARTIFACT_DIR="$ROOT_DIR/ARTIFACTS/security" bash "$ROOT_DIR/scripts/ci/security_scan.sh"
 run_lane "infra" env RUN_ID="$RUN_ID" ARTIFACT_DIR="$ARTIFACT_DIR" bash "$ROOT_DIR/scripts/ci/run_infra_lane.sh"
 
 python3 "$ROOT_DIR/scripts/ci/report_summary.py"

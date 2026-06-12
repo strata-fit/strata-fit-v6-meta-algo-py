@@ -21,6 +21,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from strata_fit_v6_meta_algo_py import run_local_meta_algorithm
+from tests.infra.meta_stress_scenarios import (
+    get_scenario,
+    validate_no_derived_predictors,
+)
 
 TERMINAL_STATUSES = {
     "completed",
@@ -60,6 +64,14 @@ def env_csv(name: str, default: list[str]) -> list[str]:
 def env_str(name: str, default: str) -> str:
     raw = os.getenv(name)
     return raw if raw is not None else default
+
+
+def _load_scenario(name: str) -> dict[str, Any] | None:
+    if not name or name == "infra_smoke":
+        return None
+    scenario = get_scenario(name)
+    validate_no_derived_predictors(scenario)
+    return scenario
 
 
 def decode_result(value: Any) -> Any:
@@ -188,6 +200,7 @@ def _build_linear_input(
     *,
     imputation_columns: list[str],
     imputation_strategy: str,
+    final_model_config: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "master": True,
@@ -199,12 +212,7 @@ def _build_linear_input(
             "imputation_strategy": imputation_strategy,
             "final_model": "sklearn_linear",
             "organizations": org_ids,
-            "final_model_config": {
-                "predictors": ["Age_diagnosis", "DAS28", "CRP", "HAQ"],
-                "outcome": "RF_positivity",
-                "n_local_iterations": 25,
-                "model_kwargs": {"solver": "lbfgs"},
-            },
+            "final_model_config": final_model_config,
         },
     }
 
@@ -214,7 +222,7 @@ def _build_cox_input(
     *,
     imputation_columns: list[str],
     imputation_strategy: str,
-    cox_expl_vars: list[str],
+    final_model_config: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "master": True,
@@ -226,14 +234,7 @@ def _build_cox_input(
             "imputation_strategy": imputation_strategy,
             "final_model": "cox",
             "organizations": org_ids,
-            "final_model_config": {
-                "time_col": "time",
-                "outcome_col": "event",
-                "expl_vars": cox_expl_vars,
-                "max_iterations": 12,
-                "tolerance": 1e-6,
-                "preprocess_raw_data": True,
-            },
+            "final_model_config": final_model_config,
         },
     }
 
@@ -243,6 +244,7 @@ def _build_km_input(
     *,
     imputation_columns: list[str],
     imputation_strategy: str,
+    final_model_config: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "master": True,
@@ -254,9 +256,7 @@ def _build_km_input(
             "imputation_strategy": imputation_strategy,
             "final_model": "km",
             "organizations": org_ids,
-            "final_model_config": {
-                "preprocess_raw_data": True,
-            },
+            "final_model_config": final_model_config,
         },
     }
 
@@ -269,7 +269,7 @@ def _build_mock_reference(
     *,
     imputation_columns: list[str],
     imputation_strategy: str,
-    cox_expl_vars: list[str],
+    model_configs: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     datasets = [pd.read_csv(path) for path in data_paths]
 
@@ -281,12 +281,7 @@ def _build_mock_reference(
             run_validation=True,
             imputation_strategy=imputation_strategy,
             final_model="sklearn_linear",
-            final_model_config={
-                "predictors": ["Age_diagnosis", "DAS28", "CRP", "HAQ"],
-                "outcome": "RF_positivity",
-                "n_local_iterations": 25,
-                "model_kwargs": {"solver": "lbfgs"},
-            },
+            final_model_config=model_configs["sklearn_linear"],
         )
     if run_cox:
         out["cox"] = run_local_meta_algorithm(
@@ -295,14 +290,7 @@ def _build_mock_reference(
             run_validation=True,
             imputation_strategy=imputation_strategy,
             final_model="cox",
-            final_model_config={
-                "time_col": "time",
-                "outcome_col": "event",
-                "expl_vars": cox_expl_vars,
-                "max_iterations": 12,
-                "tolerance": 1e-6,
-                "preprocess_raw_data": True,
-            },
+            final_model_config=model_configs["cox"],
         )
     if run_km:
         out["km"] = run_local_meta_algorithm(
@@ -311,9 +299,7 @@ def _build_mock_reference(
             run_validation=True,
             imputation_strategy=imputation_strategy,
             final_model="km",
-            final_model_config={
-                "preprocess_raw_data": True,
-            },
+            final_model_config=model_configs["km"],
         )
     return out
 
@@ -371,11 +357,37 @@ def main() -> None:
     run_cox = env_bool("V6_RUN_COX", True)
     run_km = env_bool("V6_RUN_KM", True)
     scenario_name = os.getenv("V6_SCENARIO_NAME", "infra_smoke")
+    scenario_config = _load_scenario(scenario_name)
     result_artifact = os.getenv("V6_RESULT_ARTIFACT", "").strip()
     data_manifest_path = os.getenv("V6_DATA_MANIFEST_PATH", "").strip()
     imputation_strategy = os.getenv("V6_IMPUTATION_STRATEGY", "mean").strip() or "mean"
     imputation_columns = env_csv("V6_IMPUTATION_COLUMNS", IMPUTATION_COLUMNS)
     cox_expl_vars = env_csv("V6_COX_EXPL_VARS", COX_EXPL_VARS)
+    model_configs: dict[str, dict[str, Any]] = {
+        "sklearn_linear": {
+            "predictors": ["Age_diagnosis", "DAS28", "CRP", "HAQ"],
+            "outcome": "RF_positivity",
+            "n_local_iterations": 25,
+            "model_kwargs": {"solver": "lbfgs"},
+        },
+        "cox": {
+            "time_col": "time",
+            "outcome_col": "event",
+            "expl_vars": cox_expl_vars,
+            "max_iterations": 12,
+            "tolerance": 1e-6,
+            "preprocess_raw_data": True,
+        },
+        "km": {"preprocess_raw_data": True},
+    }
+    if scenario_config:
+        models = set(scenario_config["models"])
+        run_linear = "sklearn_linear" in models
+        run_cox = "cox" in models
+        run_km = "km" in models
+        imputation_strategy = scenario_config["imputation_strategy"]
+        imputation_columns = scenario_config["imputation_columns"]
+        model_configs = scenario_config["model_configs"]
 
     ordered_names = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"]
     selected = ordered_names[:node_count]
@@ -402,7 +414,7 @@ def main() -> None:
         run_km,
         imputation_columns=imputation_columns,
         imputation_strategy=imputation_strategy,
-        cox_expl_vars=cox_expl_vars,
+        model_configs=model_configs,
     )
 
     client = Client(host, port, api_path)
@@ -437,6 +449,8 @@ def main() -> None:
         "run_cox": run_cox,
         "run_km": run_km,
         "imputation_strategy": imputation_strategy,
+        "imputation_columns": imputation_columns,
+        "model_configs": model_configs,
         "data_manifest_path": data_manifest_path,
         "tasks": {},
     }
@@ -454,6 +468,7 @@ def main() -> None:
                 org_ids,
                 imputation_columns=imputation_columns,
                 imputation_strategy=imputation_strategy,
+                final_model_config=model_configs["sklearn_linear"],
             ),
         )
         task_id = task["id"]
@@ -488,7 +503,7 @@ def main() -> None:
                 org_ids,
                 imputation_columns=imputation_columns,
                 imputation_strategy=imputation_strategy,
-                cox_expl_vars=cox_expl_vars,
+                final_model_config=model_configs["cox"],
             ),
         )
         task_id = task["id"]
@@ -525,6 +540,7 @@ def main() -> None:
                 org_ids,
                 imputation_columns=imputation_columns,
                 imputation_strategy=imputation_strategy,
+                final_model_config=model_configs["km"],
             ),
         )
         task_id = task["id"]

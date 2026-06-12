@@ -5,8 +5,8 @@ This manifest captures the repeated setup/debug issues encountered while validat
 
 ## Current State
 - `strata-fit-v6-meta-algo-py` is already on standalone `run_context`.
-- Clean-env validation and local stress-matrix validation are green.
-- The remaining authoritative signoff blocker is infrastructure evaluation on amd64, not local algorithm correctness.
+- Clean-env validation, local stress-matrix validation, and the lightweight security lane are the default pre-infra gates.
+- The authoritative signoff environment for infrastructure evaluation is amd64.
 - KM preprocessing and Cox math used for signoff are internal modules in this repo; published external `km`/`cox` repos are no longer required for the signoff path.
 
 ## Root Causes of Repeated Setup Failures
@@ -30,7 +30,7 @@ The remaining external signoff path still depends on git-sourced packages rather
 
 Practical consequence:
 - `pip install -e '.[dev]'` can still drift unless install order is controlled.
-- `pip install --no-deps` flows still need explicit transitive runtime packages (`joblib`, `threadpoolctl`) for fully working tests.
+  - `pip install --no-deps` flows still need explicit stable runtime primitives before the pinned git/tar packages.
 
 ## Deterministic Install Workflow (Recommended)
 Use explicit order and `--no-deps` for conflict-prone git packages.
@@ -43,25 +43,19 @@ Use explicit order and `--no-deps` for conflict-prone git packages.
 2. Install stable runtime/tooling primitives:
 ```bash
 .venv/bin/python -m pip install \
-  dynaconf fastapi gunicorn uvicorn python-multipart pyarrow \
-  requests PyJWT pydantic \
+  dynaconf requests PyJWT pydantic \
   pandas numpy scipy scikit-learn \
-  pytest pytest-mock vantage6-client
+  pytest pytest-mock vantage6-client pip-audit bandit
 ```
 
 3. Install pinned algorithm/runtime git deps without transitive re-resolution:
 ```bash
 .venv/bin/python -m pip install --no-deps \
   "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz" \
-  "strata-fit-v6-data-validator-py @ git+https://github.com/strata-fit/strata-fit-data-schema.git@c77d319b6539bdc48314738981b5bde478d2bacd"
+  "strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz"
 ```
 
-4. Install transitive runtime dependencies skipped by `--no-deps`:
-```bash
-.venv/bin/python -m pip install joblib threadpoolctl
-```
-
-5. Verify critical imports before tests:
+4. Verify critical imports before tests:
 ```bash
 .venv/bin/python - <<'PY'
 import dynaconf
@@ -71,10 +65,19 @@ print("imports_ok")
 PY
 ```
 
-6. Run mock test subset:
+5. Run mock test subset:
 ```bash
-.venv/bin/python -m pytest tests/test_meta_mock_client.py tests/test_mock_pipeline.py -q
+.venv/bin/python -m pytest tests/test_d2t_preprocessing.py tests/test_meta_mock_client.py tests/test_mock_pipeline.py -q
 ```
+
+## D2T Event Correctness
+- D2T RA event labeling is a correctness gate for Cox/KM, not a plotting detail.
+- The operational definition remains all three criteria together:
+  - at least two unique b/tsDMARD classes and at least six months since last DMARD change
+  - rolling DAS28 > 3.2 or rolling CRP > 1.0
+  - Pat_global > 50 or Ph_global > 50
+- Do not use derived fields (`D2T_RA`, `D2T_crit*`, `TTE`, `event_type`, `interval_start`, `interval_end`, `time`, `event`) as raw predictors in stress scenarios.
+- Scenario artifacts include per-node counts for `D2T_crit1`, `D2T_crit2`, `D2T_crit3`, and all-three `D2T_RA`.
 
 ## Debug Checklist for Future Agents
 - Confirm branch and dirty state first:
@@ -90,6 +93,10 @@ PY
   - rerun on amd64 CI before changing the algorithm path.
 - If task execution fails in infra:
   - inspect the master organization node container traceback before editing harness config.
+- If stress validation fails:
+  - inspect `ARTIFACTS/validation/meta_stress/<scenario>.json` before rerunning infra.
+- If security validation fails:
+  - inspect `ARTIFACTS/security/report.json`; fix static regressions and direct high-impact findings before dependency refreshes.
 
 ## Security/Reproducibility Guidance
 - Prefer commit-pinned git/tar refs over branch refs whenever upstream allows.

@@ -18,8 +18,16 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from tests.synthetic_strata_fit_data import SyntheticConfig, write_partitioned_csv
-from strata_fit_v6_meta_algo_py.preprocessing import strata_fit_data_to_cox_input
+from tests.synthetic_strata_fit_data import (
+    SyntheticConfig,
+    generate_d2t_truth_table_dataset,
+    write_partitioned_csv,
+)
+from tests.infra.meta_stress_scenarios import get_scenario, validate_no_derived_predictors
+from strata_fit_v6_meta_algo_py.preprocessing import (
+    derive_d2t_ra_visit_flags,
+    strata_fit_data_to_cox_input,
+)
 
 COX_EXPL_VARS = ["Age_diagnosis", "DAS28", "CRP", "HAQ", "RF_positivity"]
 IMPUTATION_COLUMNS = ["DAS28", "CRP", "HAQ", "Pat_global", "Ph_global", "Pain", "eq5d"]
@@ -193,6 +201,25 @@ def _signal_metrics(df: pd.DataFrame) -> dict[str, Any]:
     return metrics
 
 
+def _d2t_criteria_summary(df: pd.DataFrame) -> dict[str, Any]:
+    try:
+        visits = derive_d2t_ra_visit_flags(df)
+    except Exception as exc:
+        return {"error": f"d2t-criteria-failed: {exc}"}
+
+    criteria = ["D2T_crit1", "D2T_crit2", "D2T_crit3", "D2T_RA"]
+    out: dict[str, Any] = {
+        "visits": {column: int(visits[column].sum()) for column in criteria},
+        "patients": {},
+        "all_three_required": bool(
+            (visits["D2T_RA"] == (visits["D2T_crit1"] & visits["D2T_crit2"] & visits["D2T_crit3"])).all()
+        ),
+    }
+    grouped = visits.groupby("pat_ID")[criteria].max()
+    out["patients"] = {column: int(grouped[column].sum()) for column in criteria}
+    return out
+
+
 def _node_manifest(path: Path) -> dict[str, Any]:
     df = pd.read_csv(path)
     missingness = {
@@ -207,6 +234,7 @@ def _node_manifest(path: Path) -> dict[str, Any]:
         "columns": list(df.columns),
         "missingness": missingness,
         "signal": _signal_metrics(df),
+        "d2t_criteria": _d2t_criteria_summary(df),
     }
 
 
@@ -252,6 +280,7 @@ def _build_manifest(
             "rows": int(len(combined)),
             "unique_patients": int(combined["pat_ID"].nunique()) if "pat_ID" in combined.columns else None,
             "signal": overall_signal,
+            "d2t_criteria": _d2t_criteria_summary(combined),
         },
         "nodes": nodes,
     }
@@ -268,15 +297,50 @@ def main() -> None:
     parser.add_argument("--max-logrank-p", type=float, default=0.10)
     parser.add_argument("--max-attempts", type=int, default=8)
     parser.add_argument("--manifest-path", default="")
+    parser.add_argument("--scenario", default="")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    scenario_config: dict[str, Any] | None = None
+    data_profile: dict[str, Any] = {}
+    if args.scenario:
+        scenario_config = get_scenario(args.scenario)
+        validate_no_derived_predictors(scenario_config)
+        data_profile = scenario_config["data_profile"]
+        args.node_count = int(scenario_config["node_count"])
+        args.patients_per_node = int(scenario_config["patients_per_node"])
+        args.seed = int(scenario_config["seed"])
+
     selected_paths: list[Path] = []
     selected_manifest: dict[str, Any] | None = None
+    skip_quality_loop = False
+
+    if scenario_config and scenario_config["name"] == "d2t_criteria_truth_table":
+        skip_quality_loop = True
+        path = output_dir / "data_bucket1.csv"
+        generate_d2t_truth_table_dataset().to_csv(path, index=False)
+        selected_paths = [path]
+        selected_manifest = _build_manifest(
+            paths=selected_paths,
+            node_count=1,
+            patients_per_node=8,
+            seed=args.seed,
+            rows_per_node=args.rows_per_node,
+            min_c_index=args.min_c_index,
+            max_logrank_p=args.max_logrank_p,
+            attempt=1,
+        )
+        selected_manifest["scenario"] = {
+            key: value
+            for key, value in scenario_config.items()
+            if key not in {"model_configs"}
+        }
 
     for attempt in range(1, args.max_attempts + 1):
+        if skip_quality_loop:
+            break
         candidate_seed = args.seed + (attempt - 1)
         paths = write_partitioned_csv(
             output_dir=output_dir,
@@ -284,6 +348,10 @@ def main() -> None:
                 node_count=args.node_count,
                 patients_per_node=args.patients_per_node,
                 seed=candidate_seed,
+                missingness_profile=data_profile.get("missingness_profile", "baseline"),
+                event_profile=data_profile.get("event_profile", "adequate"),
+                signal_profile=data_profile.get("signal_profile", "strong"),
+                site_heterogeneity=bool(data_profile.get("site_heterogeneity", False)),
             ),
         )
         for path in paths:
@@ -299,6 +367,12 @@ def main() -> None:
             max_logrank_p=args.max_logrank_p,
             attempt=attempt,
         )
+        if scenario_config:
+            manifest["scenario"] = {
+                key: value
+                for key, value in scenario_config.items()
+                if key not in {"model_configs"}
+            }
         selected_paths = paths
         selected_manifest = manifest
 

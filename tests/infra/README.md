@@ -61,11 +61,11 @@ tested baseline and expect more debugging if behavior changes.
 
 The CI infra lane builds on this wrapper. The default signoff path is:
 
-- `baseline_3n_full`
+- `dashboard_full_baseline`
 
 Set `V6_INFRA_PROFILE=full` to expand back to:
 
-- `fanout_5n_survival`
+- `site_heterogeneity_5n`
 - `fanout_8n_km`
 - `fanout_8n_cox`
 
@@ -113,6 +113,7 @@ INFRA_DIR=/path/to/v6-infrastructure-sh \
 PYTHON_BIN=/path/to/venv/bin/python \
 V6_NODE_COUNT=4 \
 V6_PATIENTS_PER_NODE=40 \
+V6_SCENARIO_NAME=site_heterogeneity_5n \
 V6_LOCAL_REGISTRY_PORT=5001 \
 V6_MIRROR_INFRA_IMAGES=true \
 DOCKER_REGISTRY=localhost:5001/v6infra \
@@ -125,6 +126,7 @@ Notes:
 
 - The runner reuses an existing local registry bound to the selected port.
 - The default local registry port is `5001`; only change it if that port is already occupied.
+- Set `V6_SCENARIO_NAME` to one of the stress scenarios to drive data generation and model config from the shared scenario manifest.
 - The runner does not overwrite `v6-infrastructure-sh/infrastructure/config.env`.
 - The runner warns, but does not fail, when your local harness commit or Vantage6/image versions drift from the tested baseline.
 - If the selected `PYTHON_BIN` cannot import the smoke dependencies, the runner bootstraps a disposable env under `/tmp` before generating data.

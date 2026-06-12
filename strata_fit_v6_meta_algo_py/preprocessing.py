@@ -26,18 +26,17 @@ def compute_unique_dmards(df: pd.DataFrame) -> pd.Series:
         lambda value: np.nan if pd.isna(value) else (1 if value != 0 else 0)
     )
 
-    def unique_classes(sub_df: pd.DataFrame) -> pd.Series:
+    values: dict[int, int] = {}
+    for _, sub_df in df.groupby("pat_ID", sort=False):
         seen = set()
-        counts = []
-        for b_dmard, ts_dmard in zip(sub_df["bDMARD"], sub_df["tsDMARD_binary"]):
+        for idx, b_dmard, ts_dmard in zip(sub_df.index, sub_df["bDMARD"], sub_df["tsDMARD_binary"]):
             if not pd.isna(b_dmard):
                 seen.add(("b", b_dmard))
             if not pd.isna(ts_dmard):
                 seen.add(("t", 1))
-            counts.append(len(seen))
-        return pd.Series(counts, index=sub_df.index)
+            values[idx] = len(seen)
 
-    return df.groupby("pat_ID", group_keys=False).apply(unique_classes)
+    return pd.Series(values).reindex(df.index)
 
 
 def _first_non_null(series: pd.Series) -> float | int | None:
@@ -47,7 +46,13 @@ def _first_non_null(series: pd.Series) -> float | int | None:
     return valid.iloc[0]
 
 
-def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
+def derive_d2t_ra_visit_flags(df: pd.DataFrame) -> pd.DataFrame:
+    """Return visit-level D2T RA criteria and event flags.
+
+    A visit is a D2T RA event only when all three operational criteria are
+    satisfied together. Keeping this in one helper lets tests and validation
+    artifacts assert the same logic used by KM/Cox preprocessing.
+    """
     df = df.copy()
     df.sort_values(["pat_ID", "Visit_months_from_diagnosis"], inplace=True)
 
@@ -93,6 +98,11 @@ def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
     )
     df["D2T_crit3"] = (df["Pat_global"] > 50) | (df["Ph_global"] > 50)
     df["D2T_RA"] = df["D2T_crit1"] & df["D2T_crit2"] & df["D2T_crit3"]
+    return df
+
+
+def strata_fit_data_to_km_input(df: pd.DataFrame) -> pd.DataFrame:
+    df = derive_d2t_ra_visit_flags(df)
 
     summary = (
         df.groupby("pat_ID")

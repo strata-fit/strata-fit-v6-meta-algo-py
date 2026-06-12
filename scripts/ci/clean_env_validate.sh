@@ -45,6 +45,7 @@ PY
 
 "$ENV_DIR/bin/python" -m pip freeze > "$ARTIFACT_DIR/clean_env_pip_freeze.txt"
 "$ENV_DIR/bin/python" -m pytest \
+  "$ROOT_DIR/tests/test_d2t_preprocessing.py" \
   "$ROOT_DIR/tests/test_runtime.py" \
   "$ROOT_DIR/tests/test_local_runtime.py" \
   "$ROOT_DIR/tests/test_meta_mock_client.py" \

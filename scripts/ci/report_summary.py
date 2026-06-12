@@ -48,6 +48,7 @@ def main() -> int:
     lanes = [
         read_json(artifact_dir / "clean_env_lane.json"),
         read_json(artifact_dir / "stress_matrix_lane.json"),
+        read_json(ROOT_DIR / "ARTIFACTS" / "security" / "security_lane.json"),
         read_json(artifact_dir / "infra_lane.json"),
     ]
     statuses = [lane.get("status", "fail") for lane in lanes]

@@ -102,10 +102,10 @@ run_scenario() {
 
 bootstrap_infra_env
 
-run_scenario "baseline_3n_full" 3 36 true true true
+run_scenario "dashboard_full_baseline" 3 36 true true true
 
 if [ "$INFRA_PROFILE" = "full" ]; then
-  run_scenario "fanout_5n_survival" 5 36 false true true
+  run_scenario "site_heterogeneity_5n" 5 36 false true true
   run_scenario "fanout_8n_km" 8 24 false false true
   run_scenario "fanout_8n_cox" 8 24 false true false
 fi
