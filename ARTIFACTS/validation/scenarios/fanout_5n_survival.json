@@ -1,0 +1,28 @@
+{
+  "run_id": "20260602T165048Z",
+  "timestamp_utc": "2026-06-02T16:51:07Z",
+  "scenario": "fanout_5n_survival",
+  "status": "pass",
+  "duration_s": 8.301,
+  "checks": {
+    "node_count": 5,
+    "patients_per_node": 36,
+    "models": [
+      {
+        "scenario": "fanout_5n_survival",
+        "final_model": "cox",
+        "organization_count": 5,
+        "validation_count": 5,
+        "included_organizations": 5,
+        "has_model": true
+      },
+      {
+        "scenario": "fanout_5n_survival",
+        "final_model": "km",
+        "organization_count": 5,
+        "validation_count": 5,
+        "km_curve_length": 174
+      }
+    ]
+  }
+}
