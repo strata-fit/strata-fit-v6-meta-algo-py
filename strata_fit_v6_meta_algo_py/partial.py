@@ -83,6 +83,8 @@ def cox_get_unique_event_times_imputed_frame(
     imputation_strategy: str = "mean",
     minimum_events: int = 10,
     preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     client: Any = None,
 ) -> Dict[str, Any]:
     return run_partial_method(
@@ -95,6 +97,8 @@ def cox_get_unique_event_times_imputed_frame(
             "imputation_strategy": imputation_strategy,
             "minimum_events": minimum_events,
             "preprocess_raw_data": preprocess_raw_data,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
         },
         client=client,
     )
@@ -108,6 +112,8 @@ def cox_compute_summed_z_imputed_frame(
     global_metrics: Dict[str, Any],
     imputation_strategy: str = "mean",
     preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     client: Any = None,
 ) -> Dict[str, Any]:
     return run_partial_method(
@@ -119,6 +125,8 @@ def cox_compute_summed_z_imputed_frame(
             "global_metrics": global_metrics,
             "imputation_strategy": imputation_strategy,
             "preprocess_raw_data": preprocess_raw_data,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
         },
         client=client,
     )
@@ -134,6 +142,8 @@ def cox_perform_iteration_imputed_frame(
     global_metrics: Dict[str, Any],
     imputation_strategy: str = "mean",
     preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     client: Any = None,
 ) -> Dict[str, Any]:
     return run_partial_method(
@@ -147,6 +157,8 @@ def cox_perform_iteration_imputed_frame(
             "global_metrics": global_metrics,
             "imputation_strategy": imputation_strategy,
             "preprocess_raw_data": preprocess_raw_data,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
         },
         client=client,
     )
@@ -158,6 +170,8 @@ def km_get_unique_event_times_imputed_frame(
     global_metrics: Dict[str, Any],
     imputation_strategy: str = "mean",
     preprocess_raw_data: bool = True,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     client: Any = None,
 ) -> Dict[str, Any]:
     return run_partial_method(
@@ -167,6 +181,8 @@ def km_get_unique_event_times_imputed_frame(
             "global_metrics": global_metrics,
             "imputation_strategy": imputation_strategy,
             "preprocess_raw_data": preprocess_raw_data,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
         },
         client=client,
     )
@@ -179,6 +195,8 @@ def km_get_event_table_imputed_frame(
     global_metrics: Dict[str, Any],
     imputation_strategy: str = "mean",
     preprocess_raw_data: bool = True,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     client: Any = None,
 ) -> Dict[str, Any]:
     return run_partial_method(
@@ -189,6 +207,132 @@ def km_get_event_table_imputed_frame(
             "global_metrics": global_metrics,
             "imputation_strategy": imputation_strategy,
             "preprocess_raw_data": preprocess_raw_data,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
+        },
+        client=client,
+    )
+
+
+def prevalence_by_year_imputed_frame(
+    df: pd.DataFrame,
+    *,
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    client: Any = None,
+) -> Dict[str, Any]:
+    return run_partial_method(
+        "prevalence_by_year_imputed",
+        df=df,
+        raw_input={
+            "global_metrics": global_metrics,
+            "imputation_strategy": imputation_strategy,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
+        },
+        client=client,
+    )
+
+
+def cox_risk_score_range_imputed_frame(
+    df: pd.DataFrame,
+    *,
+    time_col: str,
+    outcome_col: str,
+    expl_vars: List[str],
+    beta: List[float],
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    client: Any = None,
+) -> Dict[str, Any]:
+    return run_partial_method(
+        "cox_risk_score_range_imputed",
+        df=df,
+        raw_input={
+            "time_col": time_col,
+            "outcome_col": outcome_col,
+            "expl_vars": expl_vars,
+            "beta": beta,
+            "global_metrics": global_metrics,
+            "imputation_strategy": imputation_strategy,
+            "preprocess_raw_data": preprocess_raw_data,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
+        },
+        client=client,
+    )
+
+
+def cox_risk_score_histogram_imputed_frame(
+    df: pd.DataFrame,
+    *,
+    time_col: str,
+    outcome_col: str,
+    expl_vars: List[str],
+    beta: List[float],
+    bin_edges: List[float],
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    client: Any = None,
+) -> Dict[str, Any]:
+    return run_partial_method(
+        "cox_risk_score_histogram_imputed",
+        df=df,
+        raw_input={
+            "time_col": time_col,
+            "outcome_col": outcome_col,
+            "expl_vars": expl_vars,
+            "beta": beta,
+            "bin_edges": bin_edges,
+            "global_metrics": global_metrics,
+            "imputation_strategy": imputation_strategy,
+            "preprocess_raw_data": preprocess_raw_data,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
+        },
+        client=client,
+    )
+
+
+def cox_risk_group_summary_imputed_frame(
+    df: pd.DataFrame,
+    *,
+    time_col: str,
+    outcome_col: str,
+    expl_vars: List[str],
+    beta: List[float],
+    cutoffs: List[float],
+    horizons_months: List[int],
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    client: Any = None,
+) -> Dict[str, Any]:
+    return run_partial_method(
+        "cox_risk_group_summary_imputed",
+        df=df,
+        raw_input={
+            "time_col": time_col,
+            "outcome_col": outcome_col,
+            "expl_vars": expl_vars,
+            "beta": beta,
+            "cutoffs": cutoffs,
+            "horizons_months": horizons_months,
+            "global_metrics": global_metrics,
+            "imputation_strategy": imputation_strategy,
+            "preprocess_raw_data": preprocess_raw_data,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
         },
         client=client,
     )
@@ -279,6 +423,8 @@ def impute_and_train_sklearn_linear(
         "imputation_strategy",
         "minimum_events",
         "preprocess_raw_data",
+        "cohort",
+        "event_definition",
     ],
 )
 def cox_get_unique_event_times_imputed(
@@ -289,6 +435,8 @@ def cox_get_unique_event_times_imputed(
     imputation_strategy: str = "mean",
     minimum_events: int = 10,
     preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     output_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     result = normalize_payload(
@@ -300,6 +448,8 @@ def cox_get_unique_event_times_imputed(
             imputation_strategy=imputation_strategy,
             minimum_events=minimum_events,
             preprocess_raw_data=preprocess_raw_data,
+            cohort=cohort,
+            event_definition=event_definition,
         )
     )
     write_output(output_path, result)
@@ -315,6 +465,8 @@ def cox_get_unique_event_times_imputed(
         "global_metrics",
         "imputation_strategy",
         "preprocess_raw_data",
+        "cohort",
+        "event_definition",
     ],
 )
 def cox_compute_summed_z_imputed(
@@ -324,6 +476,8 @@ def cox_compute_summed_z_imputed(
     global_metrics: Dict[str, Any],
     imputation_strategy: str = "mean",
     preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     output_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     result = normalize_payload(
@@ -334,6 +488,8 @@ def cox_compute_summed_z_imputed(
             global_metrics=global_metrics,
             imputation_strategy=imputation_strategy,
             preprocess_raw_data=preprocess_raw_data,
+            cohort=cohort,
+            event_definition=event_definition,
         )
     )
     write_output(output_path, result)
@@ -351,6 +507,8 @@ def cox_compute_summed_z_imputed(
         "global_metrics",
         "imputation_strategy",
         "preprocess_raw_data",
+        "cohort",
+        "event_definition",
     ],
 )
 def cox_perform_iteration_imputed(
@@ -362,6 +520,8 @@ def cox_perform_iteration_imputed(
     global_metrics: Dict[str, Any],
     imputation_strategy: str = "mean",
     preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     output_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     result = normalize_payload(
@@ -374,6 +534,8 @@ def cox_perform_iteration_imputed(
             global_metrics=global_metrics,
             imputation_strategy=imputation_strategy,
             preprocess_raw_data=preprocess_raw_data,
+            cohort=cohort,
+            event_definition=event_definition,
         )
     )
     write_output(output_path, result)
@@ -383,13 +545,21 @@ def cox_perform_iteration_imputed(
 @run_context(
     input_uris="dataset_path",
     output_uris="output_path",
-    named_arguments=["global_metrics", "imputation_strategy", "preprocess_raw_data"],
+    named_arguments=[
+        "global_metrics",
+        "imputation_strategy",
+        "preprocess_raw_data",
+        "cohort",
+        "event_definition",
+    ],
 )
 def km_get_unique_event_times_imputed(
     dataset_path: str | Path,
     global_metrics: Dict[str, Any],
     imputation_strategy: str = "mean",
     preprocess_raw_data: bool = True,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     output_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     result = normalize_payload(
@@ -398,6 +568,8 @@ def km_get_unique_event_times_imputed(
             global_metrics=global_metrics,
             imputation_strategy=imputation_strategy,
             preprocess_raw_data=preprocess_raw_data,
+            cohort=cohort,
+            event_definition=event_definition,
         )
     )
     write_output(output_path, result)
@@ -412,6 +584,8 @@ def km_get_unique_event_times_imputed(
         "global_metrics",
         "imputation_strategy",
         "preprocess_raw_data",
+        "cohort",
+        "event_definition",
     ],
 )
 def km_get_event_table_imputed(
@@ -420,6 +594,8 @@ def km_get_event_table_imputed(
     global_metrics: Dict[str, Any],
     imputation_strategy: str = "mean",
     preprocess_raw_data: bool = True,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
     output_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     result = normalize_payload(
@@ -429,6 +605,181 @@ def km_get_event_table_imputed(
             global_metrics=global_metrics,
             imputation_strategy=imputation_strategy,
             preprocess_raw_data=preprocess_raw_data,
+            cohort=cohort,
+            event_definition=event_definition,
+        )
+    )
+    write_output(output_path, result)
+    return result
+
+
+@run_context(
+    input_uris="dataset_path",
+    output_uris="output_path",
+    named_arguments=["global_metrics", "imputation_strategy", "cohort", "event_definition"],
+)
+def prevalence_by_year_imputed(
+    dataset_path: str | Path,
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    output_path: str | Path | None = None,
+) -> Dict[str, Any]:
+    result = normalize_payload(
+        prevalence_by_year_imputed_frame(
+            _load_dataframe(dataset_path),
+            global_metrics=global_metrics,
+            imputation_strategy=imputation_strategy,
+            cohort=cohort,
+            event_definition=event_definition,
+        )
+    )
+    write_output(output_path, result)
+    return result
+
+
+@run_context(
+    input_uris="dataset_path",
+    output_uris="output_path",
+    named_arguments=[
+        "time_col",
+        "outcome_col",
+        "expl_vars",
+        "beta",
+        "global_metrics",
+        "imputation_strategy",
+        "preprocess_raw_data",
+        "cohort",
+        "event_definition",
+    ],
+)
+def cox_risk_score_range_imputed(
+    dataset_path: str | Path,
+    time_col: str,
+    outcome_col: str,
+    expl_vars: List[str],
+    beta: List[float],
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    output_path: str | Path | None = None,
+) -> Dict[str, Any]:
+    result = normalize_payload(
+        cox_risk_score_range_imputed_frame(
+            _load_dataframe(dataset_path),
+            time_col=time_col,
+            outcome_col=outcome_col,
+            expl_vars=expl_vars,
+            beta=beta,
+            global_metrics=global_metrics,
+            imputation_strategy=imputation_strategy,
+            preprocess_raw_data=preprocess_raw_data,
+            cohort=cohort,
+            event_definition=event_definition,
+        )
+    )
+    write_output(output_path, result)
+    return result
+
+
+@run_context(
+    input_uris="dataset_path",
+    output_uris="output_path",
+    named_arguments=[
+        "time_col",
+        "outcome_col",
+        "expl_vars",
+        "beta",
+        "bin_edges",
+        "global_metrics",
+        "imputation_strategy",
+        "preprocess_raw_data",
+        "cohort",
+        "event_definition",
+    ],
+)
+def cox_risk_score_histogram_imputed(
+    dataset_path: str | Path,
+    time_col: str,
+    outcome_col: str,
+    expl_vars: List[str],
+    beta: List[float],
+    bin_edges: List[float],
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    output_path: str | Path | None = None,
+) -> Dict[str, Any]:
+    result = normalize_payload(
+        cox_risk_score_histogram_imputed_frame(
+            _load_dataframe(dataset_path),
+            time_col=time_col,
+            outcome_col=outcome_col,
+            expl_vars=expl_vars,
+            beta=beta,
+            bin_edges=bin_edges,
+            global_metrics=global_metrics,
+            imputation_strategy=imputation_strategy,
+            preprocess_raw_data=preprocess_raw_data,
+            cohort=cohort,
+            event_definition=event_definition,
+        )
+    )
+    write_output(output_path, result)
+    return result
+
+
+@run_context(
+    input_uris="dataset_path",
+    output_uris="output_path",
+    named_arguments=[
+        "time_col",
+        "outcome_col",
+        "expl_vars",
+        "beta",
+        "cutoffs",
+        "horizons_months",
+        "global_metrics",
+        "imputation_strategy",
+        "preprocess_raw_data",
+        "cohort",
+        "event_definition",
+    ],
+)
+def cox_risk_group_summary_imputed(
+    dataset_path: str | Path,
+    time_col: str,
+    outcome_col: str,
+    expl_vars: List[str],
+    beta: List[float],
+    cutoffs: List[float],
+    horizons_months: List[int],
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    preprocess_raw_data: bool = False,
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    output_path: str | Path | None = None,
+) -> Dict[str, Any]:
+    result = normalize_payload(
+        cox_risk_group_summary_imputed_frame(
+            _load_dataframe(dataset_path),
+            time_col=time_col,
+            outcome_col=outcome_col,
+            expl_vars=expl_vars,
+            beta=beta,
+            cutoffs=cutoffs,
+            horizons_months=horizons_months,
+            global_metrics=global_metrics,
+            imputation_strategy=imputation_strategy,
+            preprocess_raw_data=preprocess_raw_data,
+            cohort=cohort,
+            event_definition=event_definition,
         )
     )
     write_output(output_path, result)
