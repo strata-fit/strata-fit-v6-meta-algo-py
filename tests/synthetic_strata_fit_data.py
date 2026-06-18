@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+import itertools
 
 import numpy as np
 import pandas as pd
@@ -54,9 +55,19 @@ class SyntheticConfig:
     node_count: int = 3
     patients_per_node: int = 36
     seed: int = 20260318
+    missingness_profile: str = "baseline"
+    event_profile: str = "adequate"
+    signal_profile: str = "strong"
+    site_heterogeneity: bool = False
 
 
-def _build_latent_cox_population(total_patients: int, seed: int) -> pd.DataFrame:
+def _build_latent_cox_population(
+    total_patients: int,
+    seed: int,
+    *,
+    event_profile: str,
+    signal_profile: str,
+) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
 
     age = rng.integers(22, 82, size=total_patients)
@@ -68,15 +79,33 @@ def _build_latent_cox_population(total_patients: int, seed: int) -> pd.DataFrame
     crp_base = np.clip(rng.gamma(shape=2.2, scale=2.3, size=total_patients), 0.2, 30.0)
     haq_base = np.clip(rng.normal(loc=1.0, scale=0.45, size=total_patients), 0.0, 3.0)
 
-    linear_risk = (
-        0.040 * (age - 50)
-        + 0.85 * (das28_base - 3.2)
-        + 0.09 * (crp_base - 5.0)
-        + 0.80 * (haq_base - 1.0)
-        + 0.35 * rf
-        + rng.normal(0.0, 0.45, size=total_patients)
-    )
-    event_prob = 1.0 / (1.0 + np.exp(-(linear_risk - 0.2)))
+    if signal_profile == "null":
+        linear_risk = rng.normal(0.0, 0.25, size=total_patients)
+    elif signal_profile == "modest":
+        linear_risk = (
+            0.020 * (age - 50)
+            + 0.45 * (das28_base - 3.2)
+            + 0.04 * (crp_base - 5.0)
+            + 0.35 * (haq_base - 1.0)
+            + 0.15 * rf
+            + rng.normal(0.0, 0.55, size=total_patients)
+        )
+    else:
+        linear_risk = (
+            0.040 * (age - 50)
+            + 0.85 * (das28_base - 3.2)
+            + 0.09 * (crp_base - 5.0)
+            + 0.80 * (haq_base - 1.0)
+            + 0.35 * rf
+            + rng.normal(0.0, 0.45, size=total_patients)
+        )
+
+    event_shift = {
+        "low": -2.25,
+        "high_censoring": -1.45,
+        "adequate": -0.2,
+    }.get(event_profile, -0.2)
+    event_prob = 1.0 / (1.0 + np.exp(-(linear_risk + event_shift)))
     event_flag = (rng.uniform(0.0, 1.0, size=total_patients) < event_prob).astype(int)
 
     event_time = np.where(
@@ -113,7 +142,13 @@ def _visit_schedule(target_time: float, event: int) -> list[float]:
     return deduped
 
 
-def _reverse_engineer_visits(latent: pd.DataFrame, seed: int) -> pd.DataFrame:
+def _reverse_engineer_visits(
+    latent: pd.DataFrame,
+    seed: int,
+    *,
+    missingness_profile: str,
+    site_shift: float = 0.0,
+) -> pd.DataFrame:
     rng = np.random.default_rng(seed + 101)
     rows: list[dict[str, float | int | str | None]] = []
 
@@ -130,21 +165,33 @@ def _reverse_engineer_visits(latent: pd.DataFrame, seed: int) -> pd.DataFrame:
             event_visit = int(row.cox_event) == 1 and month >= float(row.cox_time)
             post_switch = int(row.cox_event) == 1 and month >= dmard_switch_month
 
-            das28 = float(np.clip(row.DAS28_base + (1.25 if event_visit else -0.25) + rng.normal(0, 0.2), 1.0, 7.0))
-            crp = float(np.clip(row.CRP_base + (2.8 if event_visit else -0.6) + rng.normal(0, 0.6), 0.1, 40.0))
-            haq = float(np.clip(row.HAQ_base + (0.45 if event_visit else -0.1) + rng.normal(0, 0.1), 0.0, 3.0))
+            das28 = float(np.clip(row.DAS28_base + site_shift + (1.25 if event_visit else -0.25) + rng.normal(0, 0.2), 1.0, 7.0))
+            crp = float(np.clip(row.CRP_base + site_shift * 2.5 + (2.8 if event_visit else -0.6) + rng.normal(0, 0.6), 0.1, 40.0))
+            haq = float(np.clip(row.HAQ_base + site_shift * 0.2 + (0.45 if event_visit else -0.1) + rng.normal(0, 0.1), 0.0, 3.0))
 
             pat_global = float(np.clip(65 + rng.normal(0, 6) if event_visit else 40 + rng.normal(0, 8), 0, 100))
             ph_global = float(np.clip(62 + rng.normal(0, 7) if event_visit else 38 + rng.normal(0, 7), 0, 100))
             pain = float(np.clip((pat_global + ph_global) / 2 + rng.normal(0, 6), 0, 100))
 
-            # Missingness to exercise imputation, without breaking D2T-defining visits.
-            if not event_visit and rng.random() < 0.16:
+            missingness = {
+                "baseline": {"DAS28": 0.16, "CRP": 0.14, "HAQ": 0.12, "PRO": 0.00},
+                "high": {"DAS28": 0.34, "CRP": 0.30, "HAQ": 0.28, "PRO": 0.18},
+                "lab": {"DAS28": 0.16, "CRP": 0.42, "HAQ": 0.12, "PRO": 0.00},
+            }.get(missingness_profile, {"DAS28": 0.16, "CRP": 0.14, "HAQ": 0.12, "PRO": 0.00})
+
+            # Missingness exercises imputation without breaking D2T-defining visits.
+            if not event_visit and rng.random() < missingness["DAS28"]:
                 das28 = np.nan
-            if rng.random() < 0.14:
+            if not event_visit and rng.random() < missingness["CRP"]:
                 crp = np.nan
-            if rng.random() < 0.12:
+            if not event_visit and rng.random() < missingness["HAQ"]:
                 haq = np.nan
+            if not event_visit and rng.random() < missingness["PRO"]:
+                pat_global = np.nan
+            if not event_visit and rng.random() < missingness["PRO"]:
+                ph_global = np.nan
+            if not event_visit and rng.random() < missingness["PRO"]:
+                pain = np.nan
 
             bdmard = int(2 if post_switch else 1)
             tsdmard = int(1) if post_switch and rng.random() < 0.85 else None
@@ -195,14 +242,28 @@ def generate_partitioned_strata_fit_datasets(config: SyntheticConfig) -> list[pd
         raise ValueError("patients_per_node must be >= 12 for stable Cox threshold checks")
 
     total_patients = config.node_count * config.patients_per_node
-    latent = _build_latent_cox_population(total_patients=total_patients, seed=config.seed)
+    latent = _build_latent_cox_population(
+        total_patients=total_patients,
+        seed=config.seed,
+        event_profile=config.event_profile,
+        signal_profile=config.signal_profile,
+    )
 
     partitions: list[pd.DataFrame] = []
     for node_index in range(config.node_count):
         start = node_index * config.patients_per_node
         stop = start + config.patients_per_node
         node_latent = latent.iloc[start:stop].copy()
-        node_rows = _reverse_engineer_visits(node_latent, seed=config.seed + node_index * 17)
+        site_shift = 0.0
+        if config.site_heterogeneity:
+            midpoint = (config.node_count - 1) / 2
+            site_shift = (node_index - midpoint) * 0.22
+        node_rows = _reverse_engineer_visits(
+            node_latent,
+            seed=config.seed + node_index * 17,
+            missingness_profile=config.missingness_profile,
+            site_shift=site_shift,
+        )
         partitions.append(node_rows)
 
     return partitions
@@ -224,3 +285,49 @@ def write_partitioned_csv(
         frame.to_csv(path, index=False)
         paths.append(path)
     return paths
+
+
+def generate_d2t_truth_table_dataset() -> pd.DataFrame:
+    rows: list[dict[str, float | int | str | None]] = []
+    for patient_number, (crit1, crit2, crit3) in enumerate(
+        itertools.product([False, True], repeat=3),
+        start=1,
+    ):
+        pat_id = f"D2T{patient_number}"
+        for month in [0.0, 6.0, 12.0]:
+            treatment_changed = crit1 and month >= 6.0
+            row = {
+                "pat_ID": pat_id,
+                "Visit_months_from_diagnosis": month,
+                "Age_diagnosis": 45 + patient_number,
+                "Sex": patient_number % 2,
+                "RF_positivity": int(patient_number % 2 == 0),
+                "anti_CCP": int(patient_number % 3 == 0),
+                "DAS28": 3.21 if crit2 else 3.2,
+                "Pat_global": 51.0 if crit3 else 50.0,
+                "Pain": 55.0 if crit3 else 45.0,
+                "Ph_global": 40.0,
+                "CRP": 1.0,
+                "ESR": 18,
+                "SJC28": 3,
+                "TJC28": 4,
+                "csDMARD1": 1,
+                "csDMARD2": None,
+                "csDMARD3": None,
+                "conc_MTX_dose": 15.0,
+                "N_prev_csDMARD": 1,
+                "bDMARD": 2 if treatment_changed else 1,
+                "N_prev_bDMARD": int(treatment_changed),
+                "tsDMARD": None,
+                "N_prev_tsDMARD": 0,
+                "GC": 0,
+                "GC_type": 1,
+                "GC_dose": 0.0,
+                "eq5d": 0.75,
+                "HAQ": 1.0,
+                "Year_diagnosis": 2012,
+                "month_diagnosis": 1,
+                "Symptom_duration": 6.0,
+            }
+            rows.append(row)
+    return pd.DataFrame(rows)[PATIENT_DATA_COLUMNS]

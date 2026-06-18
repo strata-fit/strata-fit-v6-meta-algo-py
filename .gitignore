@@ -109,3 +109,4 @@ venv.bak/
 
 .psi-ignore
 report.md
+ARTIFACTS/**/report.*

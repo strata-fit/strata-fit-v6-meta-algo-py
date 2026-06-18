@@ -1,15 +1,16 @@
+from __future__ import annotations
+
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from vantage6.algorithm.client import AlgorithmClient
-from vantage6.algorithm.tools.decorators import algorithm_client
-from v6_federated_core import MethodContext, dispatch_registered_method, to_v6_result
+import pandas as pd
 
+from .client import AlgorithmProxyClient
 from .contracts import FinalModelEnum
-from .methods import (
-    METHOD_REGISTRY,
-    build_min_organization_policies,
-    build_policy_context,
-)
+from .io import normalize_payload, write_output
+from .local_client import run_local_main
+from .runtime import run_context
+from .service import run_central_method
 
 
 def _build_legacy_final_model_config(
@@ -61,9 +62,29 @@ def _build_legacy_final_model_config(
     raise ValueError(f"Unsupported final_model for legacy config: {final_model}")
 
 
-@algorithm_client
+@run_context(
+    output_uris="output_path",
+    named_arguments=[
+        "columns",
+        "organizations",
+        "model_name",
+        "run_validation",
+        "imputation_strategy",
+        "final_model",
+        "final_model_config",
+        "predictors",
+        "outcome",
+        "n_local_iterations",
+        "model_class",
+        "model_kwargs",
+        "time_col",
+        "outcome_col",
+        "expl_vars",
+        "max_iterations",
+        "tolerance",
+    ],
+)
 def main(
-    client: AlgorithmClient,
     *,
     columns: List[str],
     organizations: Optional[List[int]] = None,
@@ -82,18 +103,10 @@ def main(
     expl_vars: Optional[List[str]] = None,
     max_iterations: int = 10,
     tolerance: float = 1e-6,
+    output_path: str | Path | None = None,
+    client: Any = None,
 ) -> Dict[str, Any]:
-    """
-    Meta orchestrator:
-      validation -> imputation metrics -> final federated model.
-
-    `final_model` supported values:
-      - `sklearn_linear`
-      - `cox`
-      - `km`
-    """
     resolved_final_model = FinalModelEnum(final_model)
-
     resolved_final_config = final_model_config or _build_legacy_final_model_config(
         resolved_final_model,
         predictors=predictors,
@@ -108,17 +121,13 @@ def main(
         tolerance=tolerance,
     )
 
-    resolved_org_ids = organizations or [org["id"] for org in client.organization.list()]
-
-    method_context = MethodContext(
-        method="main",
-        organization_ids=resolved_org_ids,
-        meta={"client": client},
-    )
-    envelope = dispatch_registered_method(
-        METHOD_REGISTRY,
-        "main",
-        {
+    resolved_client = client or AlgorithmProxyClient.from_env()
+    resolved_org_ids = organizations or [
+        org["id"] for org in resolved_client.organization.list()
+    ]
+    result = normalize_payload(
+        run_central_method(
+        raw_input={
             "columns": columns,
             "organizations": organizations,
             "model_name": model_name,
@@ -127,8 +136,16 @@ def main(
             "final_model": resolved_final_model,
             "final_model_config": resolved_final_config,
         },
-        context=method_context,
-        policies=build_min_organization_policies(),
-        policy_context=build_policy_context("main", resolved_org_ids),
+        client=resolved_client,
+        organization_ids=resolved_org_ids,
+        )
     )
-    return to_v6_result(envelope)
+    write_output(output_path, result)
+    return result
+
+
+def run_local_meta_algorithm(
+    datasets: list[pd.DataFrame],
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    return run_local_main(datasets, **kwargs)

@@ -6,12 +6,41 @@ All infrastructure lifecycle operations are delegated to the external
 
 ## Prerequisite: external infra repo
 
-Clone the shared infrastructure harness:
+Before using the quick start, make sure the external infrastructure harness
+exists locally and that your paths match the script defaults.
+
+The smoke wrapper assumes this layout unless you override `INFRA_DIR`:
+
+```text
+workspace/
+  strata-fit-v6-meta-algo-py/
+  v6-infrastructure-sh/
+```
+
+If your checkout lives elsewhere, set `INFRA_DIR` explicitly.
+
+Clone or update the shared infrastructure harness:
 
 ```bash
 cd ..
 git clone https://github.com/mdw-nl/v6-infrastructure-sh.git
 ```
+
+If you already have it:
+
+```bash
+cd /path/to/v6-infrastructure-sh
+git pull
+```
+
+For the meta-algo baseline, the tested CI lane used:
+
+- `v6-infrastructure-sh` commit `3133deb74a30fe34617d69d94628bbff38c71869`
+- `VERSION_VANTAGE6=4.14.0`
+- `server-lite`, `node-lite`, and `ui` image tag `4.14.0-rc8`
+
+Local runs on different revisions are allowed, but treat them as drift from the
+tested baseline and expect more debugging if behavior changes.
 
 ## Scripts
 
@@ -27,6 +56,18 @@ git clone https://github.com/mdw-nl/v6-infrastructure-sh.git
     decoded result payload, child run completion, and mock-vs-infra similarity for Cox/KM.
 - `run_local_infra_smoke.sh`:
   - End-to-end wrapper: preflight/up/build/push/task-smoke/infra-test/down.
+  - Seeds local `localhost:${V6_LOCAL_REGISTRY_PORT:-5001}/v6infra` image refs by default so cached lite images are reused before any GHCR pull.
+  - Pulls amd64 source images automatically on non-amd64 hosts when it needs to prepare missing infra refs.
+
+The CI infra lane builds on this wrapper. The default signoff path is:
+
+- `dashboard_full_baseline`
+
+Set `V6_INFRA_PROFILE=full` to expand back to:
+
+- `site_heterogeneity_5n`
+- `fanout_8n_km`
+- `fanout_8n_cox`
 
 ## Quick start
 
@@ -36,21 +77,46 @@ From repo root:
 tests/infra/run_local_infra_smoke.sh
 ```
 
+Before that command, verify these local prerequisites:
+
+- `v6-infrastructure-sh` is cloned locally and `INFRA_DIR` points to it when it is not in `../v6-infrastructure-sh`
+- Docker is available and running
+- you have a usable Python interpreter for `PYTHON_BIN`; if it lacks the smoke dependencies, the wrapper bootstraps a disposable `/tmp` env automatically
+- the harness dependencies in `v6-infrastructure-sh` are installed the way that repo expects
+- if you want parity with the tested baseline, check out the tested harness commit and use the tested Vantage6/image versions
+
 Expected layout defaults:
 
 - Algorithm repo: current directory
 - Infra harness repo: `../v6-infrastructure-sh`
-- Python: `../.venv/bin/python`
+- Python: provide `PYTHON_BIN` explicitly if you want a specific interpreter; otherwise the wrapper can bootstrap a disposable `/tmp` env when the selected interpreter is missing required deps
+
+Typical local invocation when the harness is not a sibling checkout:
+
+```bash
+INFRA_DIR=/path/to/v6-infrastructure-sh \
+PYTHON_BIN=/path/to/venv/bin/python \
+tests/infra/run_local_infra_smoke.sh
+```
+
+If you want to align to the originally tested harness revision first:
+
+```bash
+git -C /path/to/v6-infrastructure-sh fetch origin
+git -C /path/to/v6-infrastructure-sh checkout 3133deb74a30fe34617d69d94628bbff38c71869
+```
 
 ## Useful overrides
 
 ```bash
 INFRA_DIR=/path/to/v6-infrastructure-sh \
-PYTHON_BIN=/path/to/python \
+PYTHON_BIN=/path/to/venv/bin/python \
 V6_NODE_COUNT=4 \
 V6_PATIENTS_PER_NODE=40 \
-V6_LOCAL_REGISTRY_PORT=5002 \
-V6_SKIP_BUILD_PUSH=true \
+V6_SCENARIO_NAME=site_heterogeneity_5n \
+V6_LOCAL_REGISTRY_PORT=5001 \
+V6_MIRROR_INFRA_IMAGES=true \
+DOCKER_REGISTRY=localhost:5001/v6infra \
 V6_ALGO_TAG=dev \
 V6_COLLABORATION_NAME=meta-ci \
 tests/infra/run_local_infra_smoke.sh
@@ -59,6 +125,15 @@ tests/infra/run_local_infra_smoke.sh
 Notes:
 
 - The runner reuses an existing local registry bound to the selected port.
+- Matching local `server-lite` / `node-lite` / `ui` images are retagged into the selected infra registry namespace before the wrapper attempts any remote pull.
+- The default local registry port is `5001`; only change it if that port is already occupied.
+- Set `V6_SCENARIO_NAME` to one of the stress scenarios to drive data generation and model config from the shared scenario manifest.
 - The runner does not overwrite `v6-infrastructure-sh/infrastructure/config.env`.
+- The runner warns, but does not fail, when your local harness commit or Vantage6/image versions drift from the tested baseline.
+- If the selected `PYTHON_BIN` cannot import the smoke dependencies, the runner bootstraps a disposable env under `/tmp` before generating data.
+- On hosts where the locally available `server-lite` / `node-lite` images are amd64-only, the harness auto-installs `qemu-x86_64` binfmt when needed and then retries with `DOCKER_DEFAULT_PLATFORM=linux/amd64`. Set `V6_AUTO_INSTALL_BINFMT=false` to opt out.
 - Set `V6_SKIP_BUILD_PUSH=true` to reuse an already-pushed local image tag.
 - Set `V6_RUN_LINEAR=false` if you only want the raw-data survival pipeline (`cox` + `km`).
+- Authoritative infra validation is expected to run on amd64 CI.
+- A local `exec format error` from the Vantage6 infra images is an environment/architecture problem, not a meta-algorithm problem.
+- When a task fails in infra, start by attaching to the master org node container and checking the Python traceback there.

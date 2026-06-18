@@ -12,44 +12,7 @@ from scipy.linalg import solve
 from scipy.stats import chi2, norm
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.linear_model import LogisticRegression
-from vantage6.algorithm.client import AlgorithmClient
-from vantage6.algorithm.tools.util import info, warn
 
-from coxph.contracts import (
-    ComputeSummedZInput as CoxComputeSummedZInput,
-    GetUniqueEventTimesInput as CoxGetUniqueEventTimesInput,
-    PerformIterationInput as CoxPerformIterationInput,
-)
-from coxph.methods import (
-    compute_derivatives,
-    compute_summed_z_handler as cox_compute_summed_z_handler,
-    get_unique_event_times_handler as cox_get_unique_event_times_handler,
-    perform_iteration_handler as cox_perform_iteration_handler,
-)
-
-
-def _bootstrap_validator_config_path() -> None:
-    # The validator package reads CONFIG_PATH at import-time via Dynaconf. In
-    # algorithm containers the working directory is not the project root, so
-    # default "config/" lookup can fail unless we point to the installed package.
-    if os.getenv("CONFIG_PATH"):
-        return
-    try:
-        import config as validator_config_pkg
-    except Exception:
-        return
-
-    config_dir = Path(validator_config_pkg.__file__).resolve().parent
-    os.environ["CONFIG_PATH"] = str(config_dir)
-
-
-_bootstrap_validator_config_path()
-
-from strata_fit_v6_data_validator_py.logic import load_data_models_from_settings, validate_csv
-from strata_fit_v6_imputation_py.imputation_strategies.base import (
-    ImputationStrategyEnum,
-    STRATEGY_REGISTRY,
-)
 from v6_federated_core import (
     DataContractError,
     MethodContext,
@@ -86,6 +49,36 @@ from .contracts import (
     ValidatePartialInput,
     ValidatePartialOutput,
 )
+from .cox import (
+    ComputeSummedZInput as CoxComputeSummedZInput,
+    GetUniqueEventTimesInput as CoxGetUniqueEventTimesInput,
+    PerformIterationInput as CoxPerformIterationInput,
+    compute_derivatives,
+    compute_summed_z_handler as cox_compute_summed_z_handler,
+    get_unique_event_times_handler as cox_get_unique_event_times_handler,
+    perform_iteration_handler as cox_perform_iteration_handler,
+)
+
+
+def _bootstrap_validator_config_path() -> None:
+    # The validator package reads CONFIG_PATH at import-time via Dynaconf. In
+    # algorithm containers the working directory is not the project root, so
+    # default "config/" lookup can fail unless we point to the installed package.
+    if os.getenv("CONFIG_PATH"):
+        return
+    try:
+        import config as validator_config_pkg
+    except Exception:
+        return
+
+    config_dir = Path(validator_config_pkg.__file__).resolve().parent
+    os.environ["CONFIG_PATH"] = str(config_dir)
+
+
+_bootstrap_validator_config_path()
+
+from .imputation import ImputationStrategyEnum, STRATEGY_REGISTRY
+from .log import info, warn
 from .preprocessing import (
     DEFAULT_EVENT_INDICATOR_COLUMN,
     DEFAULT_INTERVAL_END_COLUMN,
@@ -93,13 +86,14 @@ from .preprocessing import (
     strata_fit_data_to_cox_input,
     strata_fit_data_to_km_input,
 )
+from .validator import load_data_models_from_settings, validate_csv
 
 MAX_N_THRESHOLD_RETRIES = 3
 LARGE_VALUE_WARNING_THRESHOLD = 10.0
 MINIMUM_ORGANIZATIONS = 1
 
 
-def _get_client(context: MethodContext) -> AlgorithmClient:
+def _get_client(context: MethodContext) -> Any:
     client = context.meta.get("client")
     if client is None:
         raise RuntimeError("Method context is missing the AlgorithmClient")
@@ -127,7 +121,7 @@ def _coerce_strategy(strategy: Any) -> ImputationStrategyEnum:
 
 
 def _resolve_organization_ids(
-    client: AlgorithmClient,
+    client: Any,
     requested: Optional[Sequence[int]],
     context: MethodContext,
 ) -> List[int]:
@@ -145,7 +139,14 @@ def _impute_locally(
 ) -> pd.DataFrame:
     imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
-    return imputer.impute(df.copy(), global_metrics)
+    result = imputer.impute(df.copy(), global_metrics)
+    if isinstance(result, pd.DataFrame):
+        return result
+    if isinstance(result, dict):
+        return pd.DataFrame.from_dict(result)
+    raise TypeError(
+        "Imputation strategy returned unsupported type; expected pandas.DataFrame or dict"
+    )
 
 
 def _resolve_linear_model_class(model_class: Any) -> type[BaseEstimator]:
@@ -215,7 +216,8 @@ def _train_local_sklearn_linear(
     model_kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
     model_cls = _resolve_linear_model_class(model_class)
-    working = df.dropna(how="any")
+    required_columns = list(dict.fromkeys([*predictors, outcome]))
+    working = df.dropna(subset=required_columns, how="any")
     X = working[predictors].values
     y = working[outcome].values
 
@@ -280,7 +282,14 @@ def imputation_compute_partial_handler(
     strategy = _coerce_strategy(data.imputation_strategy)
     imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
-    return imputer.compute(df, data.columns)
+    result = imputer.compute(df, data.columns)
+    if isinstance(result, dict):
+        return result
+    if hasattr(result, "to_dict"):
+        return result.to_dict()
+    raise TypeError(
+        "Imputation strategy returned unsupported type; expected dict or dataframe-like object with to_dict()"
+    )
 
 
 def impute_and_train_sklearn_linear_handler(
@@ -540,7 +549,7 @@ def _compute_log_likelihood(
 
 
 def _run_cox_with_imputation(
-    client: AlgorithmClient,
+    client: Any,
     org_ids: List[int],
     config: CoxFinalConfig,
     global_metrics: Dict[str, Any],
@@ -549,6 +558,8 @@ def _run_cox_with_imputation(
     runner = TaskRunner(client)
     ids = list(org_ids)
     excluded_ids: List[int] = []
+    use_preprocess = bool(config.preprocess_raw_data)
+    retried_without_preprocess = False
 
     unique_step = WorkflowStepSpec(
         name="cox-unique-events",
@@ -590,7 +601,7 @@ def _run_cox_with_imputation(
                 "minimum_events": 10,
                 "global_metrics": global_metrics,
                 "imputation_strategy": strategy,
-                "preprocess_raw_data": config.preprocess_raw_data,
+                "preprocess_raw_data": use_preprocess,
             },
             ids,
         )
@@ -625,7 +636,43 @@ def _run_cox_with_imputation(
                     aggregated_time_events.groupby(config.time_col, as_index=False).sum()
                 )
                 unique_time_events = aggregated_time_events[config.time_col].tolist()
+                break
+
+            # Some upstream preprocessing combinations can yield empty Cox event tables
+            # even when raw event-time columns are present. Retry once on raw columns.
+            if use_preprocess and not retried_without_preprocess:
+                retried_without_preprocess = True
+                use_preprocess = False
+                continue
             break
+
+    if not unique_time_events:
+        if config.preprocess_raw_data:
+            placeholder = pd.DataFrame(
+                {
+                    "Coef": np.zeros(len(config.expl_vars), dtype=float),
+                    "Exp(coef)": np.ones(len(config.expl_vars), dtype=float),
+                    "SE": np.zeros(len(config.expl_vars), dtype=float),
+                    "Var": config.expl_vars,
+                    "Z": np.zeros(len(config.expl_vars), dtype=float),
+                    "p-value": np.ones(len(config.expl_vars), dtype=float),
+                }
+            ).set_index("Var")
+            return {
+                "included_organizations": ids,
+                "excluded_organizations": excluded_ids,
+                "model": placeholder.to_json(),
+                "table": float("nan"),
+                "warnings": [
+                    "No event table rows were produced by Cox preprocessing; returned placeholder model"
+                ],
+            }
+        return {
+            "included_organizations": [],
+            "excluded_organizations": excluded_ids,
+            "table": float("nan"),
+            "warnings": ["No organizations met the minimum event threshold"],
+        }
 
     z_results = runner.run(
         summed_z_step,
@@ -634,7 +681,7 @@ def _run_cox_with_imputation(
             "expl_vars": config.expl_vars,
             "global_metrics": global_metrics,
             "imputation_strategy": strategy,
-            "preprocess_raw_data": config.preprocess_raw_data,
+            "preprocess_raw_data": use_preprocess,
         },
         ids,
     )
@@ -657,7 +704,7 @@ def _run_cox_with_imputation(
                 "unique_time_events": unique_time_events,
                 "global_metrics": global_metrics,
                 "imputation_strategy": strategy,
-                "preprocess_raw_data": config.preprocess_raw_data,
+                "preprocess_raw_data": use_preprocess,
             },
             ids,
         )
@@ -767,7 +814,7 @@ def _run_cox_with_imputation(
 
 
 def _run_km_with_imputation(
-    client: AlgorithmClient,
+    client: Any,
     org_ids: List[int],
     config: KMFinalConfig,
     global_metrics: Dict[str, Any],

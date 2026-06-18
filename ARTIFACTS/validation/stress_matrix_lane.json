@@ -1,0 +1,108 @@
+{
+  "lane_name": "stress_matrix",
+  "status": "pass",
+  "duration_s": 32.856,
+  "scenarios": [
+    {
+      "name": "baseline_3n_full",
+      "status": "pass",
+      "duration_s": 10.19,
+      "error_summary": "",
+      "checks": {
+        "node_count": 3,
+        "patients_per_node": 36,
+        "models": [
+          {
+            "scenario": "baseline_3n_full",
+            "final_model": "sklearn_linear",
+            "organization_count": 3,
+            "validation_count": 3,
+            "coef_count": 4
+          },
+          {
+            "scenario": "baseline_3n_full",
+            "final_model": "cox",
+            "organization_count": 3,
+            "validation_count": 3,
+            "included_organizations": 3,
+            "has_model": true
+          },
+          {
+            "scenario": "baseline_3n_full",
+            "final_model": "km",
+            "organization_count": 3,
+            "validation_count": 3,
+            "km_curve_length": 105
+          }
+        ]
+      }
+    },
+    {
+      "name": "fanout_5n_survival",
+      "status": "pass",
+      "duration_s": 8.301,
+      "error_summary": "",
+      "checks": {
+        "node_count": 5,
+        "patients_per_node": 36,
+        "models": [
+          {
+            "scenario": "fanout_5n_survival",
+            "final_model": "cox",
+            "organization_count": 5,
+            "validation_count": 5,
+            "included_organizations": 5,
+            "has_model": true
+          },
+          {
+            "scenario": "fanout_5n_survival",
+            "final_model": "km",
+            "organization_count": 5,
+            "validation_count": 5,
+            "km_curve_length": 174
+          }
+        ]
+      }
+    },
+    {
+      "name": "fanout_8n_km",
+      "status": "pass",
+      "duration_s": 6.288,
+      "error_summary": "",
+      "checks": {
+        "node_count": 8,
+        "patients_per_node": 24,
+        "models": [
+          {
+            "scenario": "fanout_8n_km",
+            "final_model": "km",
+            "organization_count": 8,
+            "validation_count": 8,
+            "km_curve_length": 190
+          }
+        ]
+      }
+    },
+    {
+      "name": "fanout_8n_cox",
+      "status": "pass",
+      "duration_s": 8.052,
+      "error_summary": "",
+      "checks": {
+        "node_count": 8,
+        "patients_per_node": 24,
+        "models": [
+          {
+            "scenario": "fanout_8n_cox",
+            "final_model": "cox",
+            "organization_count": 8,
+            "validation_count": 8,
+            "included_organizations": 8,
+            "has_model": true
+          }
+        ]
+      }
+    }
+  ],
+  "error_summary": ""
+}
