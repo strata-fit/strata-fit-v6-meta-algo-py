@@ -150,6 +150,7 @@ If infra tasks fail, inspect the master org node container first; that is the fa
 
 The local smoke wrapper prints advisory warnings when your local harness commit or Vantage6/image versions differ from the originally tested baseline, but it does not block the run.
 If the selected interpreter is too bare for the smoke scripts, the wrapper bootstraps a disposable `/tmp` env before generating synthetic data.
-If the locally available Vantage6 infra images are amd64-only and Docker cannot execute them on the host, the harness now fails fast with an explicit architecture probe error instead of dying later during server import.
+The wrapper now seeds local `localhost:<port>/v6infra` tags from any matching cached `server-lite` / `node-lite` / `ui` images before attempting a remote pull, which avoids unnecessary GHCR auth failures during local repro.
+If the locally available Vantage6 infra images are amd64-only, the harness now auto-installs `qemu-x86_64` binfmt when needed and then retries with `DOCKER_DEFAULT_PLATFORM=linux/amd64`. Set `V6_AUTO_INSTALL_BINFMT=false` to opt out if you prefer to manage emulation yourself.
 
 On arm64 developer machines, local infra should be considered best-effort only. The published `server-lite` and `node-lite` images are signoff-tested on amd64 CI.

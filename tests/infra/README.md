@@ -56,8 +56,8 @@ tested baseline and expect more debugging if behavior changes.
     decoded result payload, child run completion, and mock-vs-infra similarity for Cox/KM.
 - `run_local_infra_smoke.sh`:
   - End-to-end wrapper: preflight/up/build/push/task-smoke/infra-test/down.
-  - Uses GHCR infra images directly by default.
-  - Supports optional local mirroring for best-effort arm64 developer runs.
+  - Seeds local `localhost:${V6_LOCAL_REGISTRY_PORT:-5001}/v6infra` image refs by default so cached lite images are reused before any GHCR pull.
+  - Pulls amd64 source images automatically on non-amd64 hosts when it needs to prepare missing infra refs.
 
 The CI infra lane builds on this wrapper. The default signoff path is:
 
@@ -125,12 +125,13 @@ tests/infra/run_local_infra_smoke.sh
 Notes:
 
 - The runner reuses an existing local registry bound to the selected port.
+- Matching local `server-lite` / `node-lite` / `ui` images are retagged into the selected infra registry namespace before the wrapper attempts any remote pull.
 - The default local registry port is `5001`; only change it if that port is already occupied.
 - Set `V6_SCENARIO_NAME` to one of the stress scenarios to drive data generation and model config from the shared scenario manifest.
 - The runner does not overwrite `v6-infrastructure-sh/infrastructure/config.env`.
 - The runner warns, but does not fail, when your local harness commit or Vantage6/image versions drift from the tested baseline.
 - If the selected `PYTHON_BIN` cannot import the smoke dependencies, the runner bootstraps a disposable env under `/tmp` before generating data.
-- On hosts where the locally available `server-lite` / `node-lite` images are amd64-only and Docker cannot execute them, the harness now fails fast with an architecture probe error before server startup.
+- On hosts where the locally available `server-lite` / `node-lite` images are amd64-only, the harness auto-installs `qemu-x86_64` binfmt when needed and then retries with `DOCKER_DEFAULT_PLATFORM=linux/amd64`. Set `V6_AUTO_INSTALL_BINFMT=false` to opt out.
 - Set `V6_SKIP_BUILD_PUSH=true` to reuse an already-pushed local image tag.
 - Set `V6_RUN_LINEAR=false` if you only want the raw-data survival pipeline (`cox` + `km`).
 - Authoritative infra validation is expected to run on amd64 CI.

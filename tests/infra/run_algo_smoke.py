@@ -164,6 +164,11 @@ def authenticate_admin(client: Client) -> None:
     client.setup_encryption(None)
 
 
+def get_collaboration_org_map(client: Client, collaboration_id: int) -> dict[str, int]:
+    rows = client.organization.list(collaboration=collaboration_id).get("data", [])
+    return {row["name"]: row["id"] for row in rows if row.get("name") and row.get("id") is not None}
+
+
 def create_task_with_master_fallback(
     *,
     client: Client,
@@ -428,13 +433,21 @@ def main() -> None:
         collab = next(
             c for c in client.collaboration.list()["data"] if c["name"] == collaboration_name
         )
-        org_map = {o["name"]: o["id"] for o in client.organization.list()["data"]}
+        org_map = get_collaboration_org_map(client, collab["id"])
     except Exception as exc:  # pragma: no cover
         bootstrap_errors.append(f"admin: {exc}")
 
     if collab is None:
         joined = "; ".join(bootstrap_errors) if bootstrap_errors else "no bootstrap attempts made"
         raise RuntimeError(f"Unable to bootstrap client session ({joined})")
+
+    missing_orgs = [name for name in selected if name not in org_map]
+    if missing_orgs:
+        available = ", ".join(sorted(org_map)) or "<none>"
+        raise RuntimeError(
+            f"Collaboration '{collaboration_name}' is missing expected organizations {missing_orgs}. "
+            f"Available collaboration organizations: {available}"
+        )
 
     collab_id = collab["id"]
     org_ids = [org_map[name] for name in selected]

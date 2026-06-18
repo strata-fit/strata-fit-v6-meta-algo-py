@@ -25,6 +25,11 @@ IMAGE_TAG="${V6_ALGO_TAG:-local}"
 IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
 REGISTRY_CONTAINER_NAME="v6-local-registry-meta-${REGISTRY_PORT}"
 REGISTRY_STARTED=false
+HOST_ARCH="$(uname -m)"
+DOCKER_REGISTRY_WAS_SET=false
+if [ "${DOCKER_REGISTRY+x}" = x ]; then
+  DOCKER_REGISTRY_WAS_SET=true
+fi
 
 if [[ "$PYTHON_BIN" != */* ]]; then
   RESOLVED_PYTHON_BIN="$(command -v "$PYTHON_BIN" || true)"
@@ -150,7 +155,7 @@ COLLABORATION_NAME="$COLLAB_NAME"
 ENVIRONMENT="${ENVIRONMENT:-CI}"
 UI_ENABLED="${UI_ENABLED:-false}"
 SERVER_URL="${SERVER_URL:-http://host.docker.internal}"
-DOCKER_REGISTRY="${DOCKER_REGISTRY:-ghcr.io/mdw-nl/vantage6/infrastructure}"
+DOCKER_REGISTRY="${DOCKER_REGISTRY:-}"
 STRICT_DATA_CHECKS="${STRICT_DATA_CHECKS:-true}"
 V6_SERVER_IMAGE_NAME="${V6_SERVER_IMAGE_NAME:-server-lite}"
 V6_SERVER_IMAGE_TAG="${V6_SERVER_IMAGE_TAG:-4.14.0-rc8}"
@@ -191,6 +196,68 @@ ensure_python_ready() {
   VENV_PATH="$PYTHON_ENV_ROOT"
 }
 
+host_requires_amd64_override() {
+  case "$HOST_ARCH" in
+    x86_64|amd64)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+is_localhost_registry() {
+  local registry_ref="$1"
+
+  case "$registry_ref" in
+    localhost:*|127.0.0.1:*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+docker_image_exists() {
+  local image_ref="$1"
+  docker image inspect "$image_ref" >/dev/null 2>&1
+}
+
+pull_infra_source_image() {
+  local image_ref="$1"
+
+  if host_requires_amd64_override; then
+    echo "[meta-smoke] pulling infra source image with platform ${INFRA_SOURCE_PLATFORM}: $image_ref"
+    docker pull --platform "$INFRA_SOURCE_PLATFORM" "$image_ref"
+  else
+    echo "[meta-smoke] pulling infra source image: $image_ref"
+    docker pull "$image_ref"
+  fi
+}
+
+prepare_infra_image_ref() {
+  local source_image="$1"
+  local target_image="$2"
+  local image_label="$3"
+
+  if docker_image_exists "$target_image"; then
+    echo "[meta-smoke] reusing prepared ${image_label} image: $target_image"
+    return
+  fi
+
+  if [ "$source_image" != "$target_image" ] && docker_image_exists "$source_image"; then
+    echo "[meta-smoke] tagging local ${image_label} image '$source_image' as '$target_image'"
+  else
+    pull_infra_source_image "$source_image"
+  fi
+
+  if [ "$source_image" != "$target_image" ]; then
+    docker tag "$source_image" "$target_image"
+  fi
+}
+
 ensure_python_ready
 
 echo "[meta-smoke] generating synthetic data"
@@ -218,7 +285,9 @@ COLLABORATION_NAME="$COLLAB_NAME"
 ENVIRONMENT="${ENVIRONMENT:-CI}"
 UI_ENABLED="${UI_ENABLED:-false}"
 SERVER_URL="${SERVER_URL:-http://host.docker.internal}"
-DOCKER_REGISTRY="${DOCKER_REGISTRY:-localhost:${REGISTRY_PORT}/v6infra}"
+if [ "$DOCKER_REGISTRY_WAS_SET" = false ]; then
+  DOCKER_REGISTRY="localhost:${REGISTRY_PORT}/v6infra"
+fi
 STRICT_DATA_CHECKS="${STRICT_DATA_CHECKS:-true}"
 
 echo "[meta-smoke] ensuring local registry on port ${REGISTRY_PORT}"
@@ -229,20 +298,13 @@ else
   REGISTRY_STARTED=true
 fi
 
-if [ "$MIRROR_INFRA_IMAGES" = "true" ]; then
-  echo "[meta-smoke] mirroring Vantage6 infra images into local registry"
-  docker pull --platform "$INFRA_SOURCE_PLATFORM" "$SERVER_SOURCE_IMAGE"
-  docker tag "$SERVER_SOURCE_IMAGE" "${DOCKER_REGISTRY}/${V6_SERVER_IMAGE_NAME}:${V6_SERVER_IMAGE_TAG}"
-  docker push "${DOCKER_REGISTRY}/${V6_SERVER_IMAGE_NAME}:${V6_SERVER_IMAGE_TAG}"
-
-  docker pull --platform "$INFRA_SOURCE_PLATFORM" "$NODE_SOURCE_IMAGE"
-  docker tag "$NODE_SOURCE_IMAGE" "${DOCKER_REGISTRY}/${V6_NODE_IMAGE_NAME}:${V6_NODE_IMAGE_TAG}"
-  docker push "${DOCKER_REGISTRY}/${V6_NODE_IMAGE_NAME}:${V6_NODE_IMAGE_TAG}"
+if [ "$MIRROR_INFRA_IMAGES" = "true" ] || is_localhost_registry "$DOCKER_REGISTRY"; then
+  echo "[meta-smoke] preparing Vantage6 infra image refs under '$DOCKER_REGISTRY'"
+  prepare_infra_image_ref "$SERVER_SOURCE_IMAGE" "${DOCKER_REGISTRY}/${V6_SERVER_IMAGE_NAME}:${V6_SERVER_IMAGE_TAG}" "server"
+  prepare_infra_image_ref "$NODE_SOURCE_IMAGE" "${DOCKER_REGISTRY}/${V6_NODE_IMAGE_NAME}:${V6_NODE_IMAGE_TAG}" "node"
 
   if [ "$UI_ENABLED" = "true" ]; then
-    docker pull --platform "$INFRA_SOURCE_PLATFORM" "$UI_SOURCE_IMAGE"
-    docker tag "$UI_SOURCE_IMAGE" "${DOCKER_REGISTRY}/${V6_UI_IMAGE_NAME}:${V6_UI_IMAGE_TAG}"
-    docker push "${DOCKER_REGISTRY}/${V6_UI_IMAGE_NAME}:${V6_UI_IMAGE_TAG}"
+    prepare_infra_image_ref "$UI_SOURCE_IMAGE" "${DOCKER_REGISTRY}/${V6_UI_IMAGE_NAME}:${V6_UI_IMAGE_TAG}" "ui"
   fi
 fi
 
