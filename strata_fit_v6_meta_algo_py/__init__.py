@@ -13,6 +13,10 @@ __all__ = [
     "cox_perform_iteration_imputed",
     "km_get_unique_event_times_imputed",
     "km_get_event_table_imputed",
+    "prevalence_by_year_imputed",
+    "cox_risk_score_range_imputed",
+    "cox_risk_score_histogram_imputed",
+    "cox_risk_group_summary_imputed",
 ]
 
 
@@ -21,11 +25,15 @@ if TYPE_CHECKING:
     from .partial import (
         cox_compute_summed_z_imputed,
         cox_get_unique_event_times_imputed,
+        cox_risk_group_summary_imputed,
+        cox_risk_score_histogram_imputed,
+        cox_risk_score_range_imputed,
         cox_perform_iteration_imputed,
         imputation_compute_partial,
         impute_and_train_sklearn_linear,
         km_get_event_table_imputed,
         km_get_unique_event_times_imputed,
+        prevalence_by_year_imputed,
         validate_partial,
     )
 
@@ -45,6 +53,10 @@ def __getattr__(name: str) -> Any:
         "cox_perform_iteration_imputed",
         "km_get_unique_event_times_imputed",
         "km_get_event_table_imputed",
+        "prevalence_by_year_imputed",
+        "cox_risk_score_range_imputed",
+        "cox_risk_score_histogram_imputed",
+        "cox_risk_group_summary_imputed",
     }:
         from . import partial
 
