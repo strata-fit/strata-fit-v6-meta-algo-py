@@ -43,6 +43,55 @@ jobs:
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
 
+ validation-baseline:
+    name: Validation Baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Checkout infra harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: mdw-nl/v6-infrastructure-sh
+          ref: 3133deb74a30fe34617d69d94628bbff38c71869
+          path: tools/v6-infra
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Docker info
+        run: docker info
+
+      - name: Clean environment validation
+        run: PYTHON_BOOTSTRAP=python3 bash scripts/ci/clean_env_validate.sh
+
+      - name: Local stress matrix
+        run: python3 scripts/ci/stress_matrix.py
+
+      - name: Infra baseline validation
+        run: |
+          INFRA_DIR="$GITHUB_WORKSPACE/tools/v6-infra" \
+          PYTHON_BOOTSTRAP=python3 \
+          V6_INFRA_PROFILE=baseline \
+          bash scripts/ci/run_infra_lane.sh
+
+      - name: Validation report
+        if: always()
+        run: python3 scripts/ci/report_summary.py
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: validation-artifacts
+          path: ARTIFACTS/validation
+
+
   build-and-push:
     name: Build and Push Docker Image
     if: startsWith(github.ref, 'refs/tags/release/v') || github.ref == 'refs/tags/dev'
@@ -84,7 +133,7 @@ jobs:
 
       - name: Build and push Docker image (dev)
         if: github.ref == 'refs/tags/dev'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: ./
           push: true
