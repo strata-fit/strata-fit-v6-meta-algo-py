@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM harbor2.vantage6.ai/infrastructure/algorithm-base:4.13
 
 WORKDIR /app
 COPY . /app

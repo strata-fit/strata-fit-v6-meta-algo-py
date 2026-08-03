@@ -44,12 +44,13 @@ class SurvivalBundleFinalConfig(BaseModel):
     expl_vars: List[str] = Field(
         default_factory=lambda: [
             "Age_diagnosis",
-            "Sex",
-            "RF_positivity",
-            "anti_CCP",
-            "DAS28",
-            "CRP",
-            "HAQ",
+            "Sex_Female",
+            "Serology_Either",
+            "Serology_Both",
+            "Serology_Missing",
+            "Diagnosis_year_2006_2010",
+            "Diagnosis_year_2011_2015",
+            "Diagnosis_year_2016_2024",
         ]
     )
     max_iterations: int = 10
@@ -250,3 +251,14 @@ class CoxRiskGroupSummaryImputedInput(BaseModel):
 
 class CoxRiskGroupSummaryImputedOutput(BaseModel):
     groups: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class D2TCharacteristicsInput(BaseModel):
+    global_metrics: Dict[str, Any]
+    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
+
+
+class D2TCharacteristicsOutput(RootModel[Dict[str, float | int]]):
+    pass

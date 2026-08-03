@@ -39,6 +39,8 @@ from .contracts import (
     CoxRiskScoreHistogramImputedOutput,
     CoxRiskScoreRangeImputedInput,
     CoxRiskScoreRangeImputedOutput,
+    D2TCharacteristicsInput,
+    D2TCharacteristicsOutput,
     FinalModelEnum,
     ImputationComputePartialInput,
     ImputationComputePartialOutput,
@@ -94,6 +96,7 @@ from .preprocessing import (
     DEFAULT_INTERVAL_END_COLUMN,
     DEFAULT_INTERVAL_START_COLUMN,
     compute_d2t_prevalence_by_year,
+    compute_d2t_characteristics_components,
     filter_dataframe_for_cohort,
     get_d2t_definition_config,
     list_supported_d2t_definitions,
@@ -105,6 +108,21 @@ from .validator import load_data_models_from_settings, validate_csv
 MAX_N_THRESHOLD_RETRIES = 3
 LARGE_VALUE_WARNING_THRESHOLD = 10.0
 MINIMUM_ORGANIZATIONS = 1
+COX_TERM_LABELS = {
+    "Age_diagnosis": ("Age at diagnosis", "Per year increase"),
+    "Sex_Female": ("Sex", "Female vs Male"),
+    "Serology_Either": ("Serology", "Either vs Seronegative"),
+    "Serology_Both": ("Serology", "Both vs Seronegative"),
+    "Serology_Missing": ("Serology", "Missing vs Seronegative"),
+    "Diagnosis_year_2006_2010": ("Diagnosis year", "2006–2010 vs <2006"),
+    "Diagnosis_year_2011_2015": ("Diagnosis year", "2011–2015 vs <2006"),
+    "Diagnosis_year_2016_2024": ("Diagnosis year", "2016–2024 vs <2006"),
+}
+
+
+def _cox_term_metadata(variable: str) -> Dict[str, str]:
+    group, comparison = COX_TERM_LABELS.get(variable, (variable, ""))
+    return {"variable_group": group, "comparison": comparison}
 
 
 def _get_client(context: MethodContext) -> Any:
@@ -173,6 +191,13 @@ def _filter_and_impute_for_survival(
     filtered = filter_dataframe_for_cohort(df, cohort)
     if filtered.empty:
         return filtered
+    # Missingness is itself a requested Cox category and must survive numeric
+    # imputation of RF/anti-CCP.
+    filtered = filtered.copy()
+    filtered["_serology_missing_original"] = (
+        pd.to_numeric(filtered["RF_positivity"], errors="coerce").isna()
+        | pd.to_numeric(filtered["anti_CCP"], errors="coerce").isna()
+    )
     return _impute_locally(filtered, global_metrics, strategy)
 
 
@@ -571,6 +596,47 @@ def prevalence_by_year_imputed_handler(
     return {"rows": prevalence.to_dict(orient="records")}
 
 
+def d2t_characteristics_handler(
+    data: D2TCharacteristicsInput,
+    context: Optional[MethodContext] = None,
+) -> Dict[str, Any]:
+    if context is None:
+        raise RuntimeError("Method context is required for d2t_characteristics")
+    filtered = filter_dataframe_for_cohort(_get_dataframe(context), data.cohort)
+    imputed = _impute_locally(filtered, data.global_metrics, _coerce_strategy(data.imputation_strategy))
+    return compute_d2t_characteristics_components(imputed, event_definition=data.event_definition)
+
+
+def _aggregate_d2t_characteristics(partials: List[Dict[str, Any]]) -> Dict[str, Any]:
+    keys = (
+        "d2t_patients", "female_count", "female_sum", "female_sum_sq",
+        "rf_count", "rf_sum", "rf_sum_sq", "anti_ccp_count", "anti_ccp_sum",
+        "anti_ccp_sum_sq", "age_count", "age_sum", "age_sum_sq",
+        "das28_count", "das28_sum", "das28_sum_sq",
+    )
+    totals = {key: sum(float(partial.get(key, 0)) for partial in partials) for key in keys}
+
+    def mean(prefix: str) -> float | None:
+        count = totals[f"{prefix}_count"]
+        return totals[f"{prefix}_sum"] / count if count else None
+
+    def sd(prefix: str) -> float | None:
+        count = totals[f"{prefix}_count"]
+        if count <= 1:
+            return None
+        variance = (totals[f"{prefix}_sum_sq"] - totals[f"{prefix}_sum"] ** 2 / count) / (count - 1)
+        return math.sqrt(max(variance, 0.0))
+
+    return {
+        "d2t_patients": int(totals["d2t_patients"]),
+        "female_percentage": None if mean("female") is None else 100.0 * mean("female"),
+        "rf_positive_percentage": None if mean("rf") is None else 100.0 * mean("rf"),
+        "anti_ccp_positive_percentage": None if mean("anti_ccp") is None else 100.0 * mean("anti_ccp"),
+        "age_mean": mean("age"), "age_sd": sd("age"),
+        "das28_mean_at_d2t": mean("das28"), "das28_sd_at_d2t": sd("das28"),
+    }
+
+
 def _cox_input_for_risk_summary(
     df: pd.DataFrame,
     *,
@@ -930,6 +996,7 @@ def _run_cox_with_imputation(
                 "coefficients": [
                     {
                         "variable": variable,
+                        **_cox_term_metadata(variable),
                         "coef": 0.0,
                         "hazard_ratio": 1.0,
                         "standard_error": 0.0,
@@ -1091,6 +1158,7 @@ def _run_cox_with_imputation(
         "coefficients": [
             {
                 "variable": variable,
+                **_cox_term_metadata(variable),
                 "coef": float(row["Coef"]),
                 "hazard_ratio": float(row["Exp(coef)"]),
                 "standard_error": float(row["SE"]),
@@ -1554,6 +1622,12 @@ def _run_survival_bundle_with_imputation(
     global_metrics: Dict[str, Any],
     strategy: ImputationStrategyEnum,
 ) -> Dict[str, Any]:
+    characteristics_step = WorkflowStepSpec(
+        name="d2t-characteristics",
+        method="d2t_characteristics",
+        input_model=D2TCharacteristicsInput,
+        output_model=D2TCharacteristicsOutput,
+    )
     incidence = _run_km_with_imputation(
         client,
         org_ids,
@@ -1589,6 +1663,18 @@ def _run_survival_bundle_with_imputation(
         global_metrics=global_metrics,
         strategy=strategy,
     )
+    characteristics = _aggregate_d2t_characteristics(
+        TaskRunner(client).run(
+            characteristics_step,
+            {
+                "global_metrics": global_metrics,
+                "imputation_strategy": strategy,
+                "cohort": config.cohort,
+                "event_definition": config.event_definition,
+            },
+            org_ids,
+        )
+    )
     risk = _run_risk_stratification_with_imputation(
         client,
         cox.get("included_organizations", org_ids),
@@ -1608,6 +1694,7 @@ def _run_survival_bundle_with_imputation(
         "incidence": incidence,
         "prevalence": prevalence,
         "cox": cox,
+        "d2t_characteristics": characteristics,
         "risk_stratification": risk,
         "metadata": {
             "event_definition": config.event_definition,
@@ -1814,6 +1901,12 @@ METHOD_REGISTRY = MethodRegistry(
             input_model=CoxRiskGroupSummaryImputedInput,
             output_model=CoxRiskGroupSummaryImputedOutput,
             handler=cox_risk_group_summary_imputed_handler,
+        ),
+        MethodSpec(
+            name="d2t_characteristics",
+            input_model=D2TCharacteristicsInput,
+            output_model=D2TCharacteristicsOutput,
+            handler=d2t_characteristics_handler,
         ),
     ]
 )

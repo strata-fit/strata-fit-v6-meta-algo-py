@@ -430,8 +430,10 @@ def strata_fit_data_to_cox_input(
     if missing_km_columns:
         raise ValueError(f"KM preprocessing output missing columns: {missing_km_columns}")
 
-    visits = _normalize_year_floor(df)
+    # Keep the original diagnosis year for the <2006 reference category.
+    visits = df.sort_values(["pat_ID", "Visit_months_from_diagnosis"]).copy()
     visits = visits[visits["pat_ID"].isin(set(km_summary["pat_ID"].tolist()))].copy()
+    visits = derive_paper_cox_covariates(visits)
     for covariate in covariates:
         if covariate not in visits.columns:
             raise ValueError(f"Covariate '{covariate}' not found in STRATA-FIT dataframe")
@@ -457,6 +459,59 @@ def strata_fit_data_to_cox_input(
     ).astype(int)
     selected = ["pat_ID", time_col, outcome_col, *covariates]
     return cox_df[selected]
+
+
+def derive_paper_cox_covariates(df: pd.DataFrame) -> pd.DataFrame:
+    """Add the pre-specified categorical Cox contrasts as numeric indicators."""
+    out = df.copy()
+    sex = _safe_numeric(out["Sex"])
+    rf = _safe_numeric(out["RF_positivity"])
+    anti_ccp = _safe_numeric(out["anti_CCP"])
+    year = _safe_numeric(out["Year_diagnosis"])
+    out["Sex_Female"] = np.where(sex.isna(), np.nan, (sex == 1).astype(float))
+    missing = (
+        out["_serology_missing_original"].fillna(False).astype(bool)
+        if "_serology_missing_original" in out.columns
+        else rf.isna() | anti_ccp.isna()
+    )
+    out["Serology_Either"] = ((rf == 1) ^ (anti_ccp == 1)).astype(float)
+    out["Serology_Both"] = ((rf == 1) & (anti_ccp == 1)).astype(float)
+    out["Serology_Missing"] = missing.astype(float)
+    out.loc[missing, ["Serology_Either", "Serology_Both"]] = 0.0
+    for name, low, high in (
+        ("Diagnosis_year_2006_2010", 2006, 2010),
+        ("Diagnosis_year_2011_2015", 2011, 2015),
+        ("Diagnosis_year_2016_2024", 2016, 2024),
+    ):
+        out[name] = year.between(low, high, inclusive="both").astype(float)
+        out.loc[year.isna(), name] = np.nan
+    return out
+
+
+def compute_d2t_characteristics_components(
+    df: pd.DataFrame, *, event_definition: str = DEFAULT_EVENT_DEFINITION
+) -> dict[str, float | int]:
+    """Return aggregate-only components at each patient's first D2T visit."""
+    tagged = derive_d2t_ra_visit_flags(
+        df, event_definition=event_definition,
+        apply_patient_eligibility=True, exclude_prevalent_at_baseline=False,
+    )
+    first = (tagged[tagged["D2T_RA"]]
+             .sort_values(["pat_ID", "Visit_months_from_diagnosis"])
+             .drop_duplicates("pat_ID", keep="first"))
+
+    def components(column: str, prefix: str) -> dict[str, float | int]:
+        values = _safe_numeric(first[column])
+        return {f"{prefix}_count": int(values.notna().sum()),
+                f"{prefix}_sum": float(values.fillna(0).sum()),
+                f"{prefix}_sum_sq": float(values.fillna(0).pow(2).sum())}
+
+    result: dict[str, float | int] = {"d2t_patients": int(len(first))}
+    for column, prefix in (("Sex", "female"), ("RF_positivity", "rf"),
+                           ("anti_CCP", "anti_ccp"), ("Age_diagnosis", "age"),
+                           ("DAS28", "das28")):
+        result.update(components(column, prefix))
+    return result
 
 
 def compute_d2t_prevalence_by_year(
