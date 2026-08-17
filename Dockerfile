@@ -19,10 +19,12 @@ RUN pip install --no-cache-dir \
 
 # Install pinned algorithm dependencies without
 # re-resolving/transitively drifting already pinned runtime dependencies.
+ARG STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC="strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz"
+ARG V6_FEDERATED_CORE_PACKAGE_SPEC="v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz"
 RUN pip install --no-cache-dir --no-deps \
-    "strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz"
+    "$STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC"
 RUN pip install --no-cache-dir --no-deps \
-    "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz"
+    "$V6_FEDERATED_CORE_PACKAGE_SPEC"
 
 # Install this algorithm package without re-resolving transitive dependencies.
 RUN pip install --no-cache-dir --no-deps .

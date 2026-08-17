@@ -45,9 +45,13 @@ def test_entrypoint_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     sentinel = object()
 
     class FakeEntryPoint:
-        def __init__(self, name: str) -> None:
+        def __init__(
+            self,
+            name: str,
+            dist_name: str = "strata_fit_v6_meta_algo_py",
+        ) -> None:
             self.name = name
-            self.dist = type("Dist", (), {"name": "strata_fit_v6_meta_algo_py"})()
+            self.dist = type("Dist", (), {"name": dist_name})()
 
         def load(self):
             return sentinel
@@ -55,6 +59,39 @@ def test_entrypoint_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "strata_fit_v6_meta_algo_py.runtime.entry_points",
         lambda *, group: [FakeEntryPoint("main")],
+    )
+
+    assert _resolve_entrypoint_callable("main") is sentinel
+
+
+def test_entrypoint_resolution_ignores_other_run_context_distributions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel = object()
+
+    class FakeEntryPoint:
+        def __init__(self, name: str, dist_name: str, loaded=None) -> None:
+            self.name = name
+            self.dist = type("Dist", (), {"name": dist_name})()
+            self.loaded = loaded
+
+        def load(self):
+            return self.loaded
+
+    monkeypatch.setattr(
+        "strata_fit_v6_meta_algo_py.runtime.entry_points",
+        lambda *, group: [
+            FakeEntryPoint(
+                "validate_data",
+                "strata_fit_v6_data_validator_py",
+                loaded=object(),
+            ),
+            FakeEntryPoint(
+                "main",
+                "strata_fit_v6_meta_algo_py",
+                loaded=sentinel,
+            ),
+        ],
     )
 
     assert _resolve_entrypoint_callable("main") is sentinel

@@ -19,6 +19,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 
 RUN_CONTEXT_ENTRYPOINT_GROUP = "run_context"
+RUN_CONTEXT_DISTRIBUTION_NAME = "strata_fit_v6_meta_algo_py"
 STRING_ENCODING = "utf-8"
 ENV_VAR_EQUALS_REPLACEMENT = "!"
 _NEEDS_CONTEXT_ATTR = "__run_context_needs_context__"
@@ -195,12 +196,29 @@ def _raise_if_multiple_distributions(entry_points_: list[EntryPoint]) -> None:
         )
 
 
+def _filter_entrypoints_for_distribution(
+    entry_points_: list[EntryPoint],
+    distribution_name: str | None,
+) -> list[EntryPoint]:
+    if distribution_name is None:
+        return entry_points_
+    return [
+        ep
+        for ep in entry_points_
+        if _entrypoint_distribution_name(ep) == distribution_name
+    ]
+
+
 def _resolve_entrypoint_callable(
     name: str,
     *,
     require_single_distribution: bool = True,
+    distribution_name: str | None = RUN_CONTEXT_DISTRIBUTION_NAME,
 ) -> Callable[..., Any]:
-    available = list(entry_points(group=RUN_CONTEXT_ENTRYPOINT_GROUP))
+    available = _filter_entrypoints_for_distribution(
+        list(entry_points(group=RUN_CONTEXT_ENTRYPOINT_GROUP)),
+        distribution_name,
+    )
     if require_single_distribution:
         _raise_if_multiple_distributions(available)
     matches = [item for item in available if item.name == name]
@@ -214,12 +232,17 @@ def _resolve_entrypoint_callable(
     return matches[0].load()
 
 
-def dispatch_run_context(*, require_single_distribution: bool = True) -> Any:
+def dispatch_run_context(
+    *,
+    require_single_distribution: bool = True,
+    distribution_name: str | None = RUN_CONTEXT_DISTRIBUTION_NAME,
+) -> Any:
     context = RunContext.from_env()
     requested = context.entrypoint_name()
     func = _resolve_entrypoint_callable(
         requested,
         require_single_distribution=require_single_distribution,
+        distribution_name=distribution_name,
     )
     kwargs: dict[str, Any] = {}
     if getattr(func, _NEEDS_CONTEXT_ATTR, False):

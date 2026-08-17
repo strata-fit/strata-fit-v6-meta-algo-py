@@ -23,6 +23,9 @@ SKIP_BUILD_PUSH="${V6_SKIP_BUILD_PUSH:-false}"
 IMAGE_REPO="localhost:${REGISTRY_PORT}/strata-fit-v6-meta-algo"
 IMAGE_TAG="${V6_ALGO_TAG:-local}"
 IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
+V6_FEDERATED_CORE_PACKAGE_SPEC="${V6_FEDERATED_CORE_PACKAGE_SPEC:-v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz}"
+STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC="${STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC:-strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz}"
+DOCKER_LOCAL_DEPS_DIR="$ROOT_DIR/.docker-local-deps-${IMAGE_TAG}"
 REGISTRY_CONTAINER_NAME="v6-local-registry-meta-${REGISTRY_PORT}"
 REGISTRY_STARTED=false
 HOST_ARCH="$(uname -m)"
@@ -163,7 +166,7 @@ V6_NODE_IMAGE_NAME="${V6_NODE_IMAGE_NAME:-node-lite}"
 V6_NODE_IMAGE_TAG="${V6_NODE_IMAGE_TAG:-4.14.0-rc8}"
 V6_UI_IMAGE_NAME="${V6_UI_IMAGE_NAME:-ui}"
 V6_UI_IMAGE_TAG="${V6_UI_IMAGE_TAG:-4.14.0-rc8}"
-trap 'set +e; cd "$INFRA_DIR/infrastructure" && ENVIRONMENT="$ENVIRONMENT" UI_ENABLED="$UI_ENABLED" NODES_CONFIG="$NODES_CONFIG" COLLABORATION_NAME="$COLLABORATION_NAME" PYTHON_INTERPRETER="$PYTHON_INTERPRETER" VENV_PATH="$VENV_PATH" SERVER_URL="$SERVER_URL" DOCKER_REGISTRY="$DOCKER_REGISTRY" STRICT_DATA_CHECKS="$STRICT_DATA_CHECKS" ./infra.sh down >/dev/null 2>&1 || true; if [ "$REGISTRY_STARTED" = true ]; then docker rm -f "$REGISTRY_CONTAINER_NAME" >/dev/null 2>&1 || true; fi; rm -rf "$TMP_DIR"' EXIT
+trap 'set +e; cd "$INFRA_DIR/infrastructure" && ENVIRONMENT="$ENVIRONMENT" UI_ENABLED="$UI_ENABLED" NODES_CONFIG="$NODES_CONFIG" COLLABORATION_NAME="$COLLABORATION_NAME" PYTHON_INTERPRETER="$PYTHON_INTERPRETER" VENV_PATH="$VENV_PATH" SERVER_URL="$SERVER_URL" DOCKER_REGISTRY="$DOCKER_REGISTRY" STRICT_DATA_CHECKS="$STRICT_DATA_CHECKS" ./infra.sh down >/dev/null 2>&1 || true; if [ "$REGISTRY_STARTED" = true ]; then docker rm -f "$REGISTRY_CONTAINER_NAME" >/dev/null 2>&1 || true; fi; rm -rf "$TMP_DIR" "$DOCKER_LOCAL_DEPS_DIR"' EXIT
 
 SERVER_SOURCE_IMAGE="${V6_SERVER_SOURCE_IMAGE:-ghcr.io/mdw-nl/vantage6/infrastructure/server-lite:4.14.0-rc8}"
 NODE_SOURCE_IMAGE="${V6_NODE_SOURCE_IMAGE:-ghcr.io/mdw-nl/vantage6/infrastructure/node-lite:4.14.0-rc8}"
@@ -258,6 +261,54 @@ prepare_infra_image_ref() {
   fi
 }
 
+extract_local_package_path() {
+  local spec="$1"
+  local path=""
+
+  if [ -e "$spec" ]; then
+    printf '%s' "$spec"
+    return 0
+  fi
+
+  case "$spec" in
+    file://*)
+      path="${spec#file://}"
+      ;;
+    *" @ file://"*)
+      path="${spec#* @ file://}"
+      ;;
+    *" @ /"*)
+      path="/${spec#* @ /}"
+      ;;
+  esac
+
+  if [ -n "$path" ] && [ -e "$path" ]; then
+    printf '%s' "$path"
+    return 0
+  fi
+
+  return 1
+}
+
+prepare_docker_package_spec() {
+  local label="$1"
+  local spec="$2"
+  local local_path=""
+  local wheel_path=""
+
+  local_path="$(extract_local_package_path "$spec" || true)"
+  if [ -z "$local_path" ]; then
+    printf '%s' "$spec"
+    return 0
+  fi
+
+  mkdir -p "$DOCKER_LOCAL_DEPS_DIR"
+  echo "[meta-smoke] building ${label} wheel for Docker context from '$local_path'" >&2
+  "$PYTHON_BIN" -m pip wheel --no-deps --wheel-dir "$DOCKER_LOCAL_DEPS_DIR" "$local_path" >&2
+  wheel_path="$(ls -t "$DOCKER_LOCAL_DEPS_DIR"/*.whl | head -n 1)"
+  printf '/app/%s/%s' "$(basename "$DOCKER_LOCAL_DEPS_DIR")" "$(basename "$wheel_path")"
+}
+
 ensure_python_ready
 
 echo "[meta-smoke] generating synthetic data"
@@ -347,7 +398,12 @@ if [ "$SKIP_BUILD_PUSH" = "true" ]; then
 else
   echo "[meta-smoke] building and pushing algorithm image: $IMAGE"
   cd "$ROOT_DIR"
-  docker build -t "$IMAGE" .
+  DOCKER_STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC="$(prepare_docker_package_spec "data validator" "$STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC")"
+  DOCKER_V6_FEDERATED_CORE_PACKAGE_SPEC="$(prepare_docker_package_spec "federated core" "$V6_FEDERATED_CORE_PACKAGE_SPEC")"
+  docker build \
+    --build-arg "STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC=$DOCKER_STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC" \
+    --build-arg "V6_FEDERATED_CORE_PACKAGE_SPEC=$DOCKER_V6_FEDERATED_CORE_PACKAGE_SPEC" \
+    -t "$IMAGE" .
   docker push "$IMAGE"
 fi
 
