@@ -194,10 +194,11 @@ def _filter_and_impute_for_survival(
     # Missingness is itself a requested Cox category and must survive numeric
     # imputation of RF/anti-CCP.
     filtered = filtered.copy()
-    filtered["_serology_missing_original"] = (
-        pd.to_numeric(filtered["RF_positivity"], errors="coerce").isna()
-        | pd.to_numeric(filtered["anti_CCP"], errors="coerce").isna()
-    )
+    if {"RF_positivity", "anti_CCP"} <= set(filtered.columns):
+        filtered["_serology_missing_original"] = (
+            pd.to_numeric(filtered["RF_positivity"], errors="coerce").isna()
+            | pd.to_numeric(filtered["anti_CCP"], errors="coerce").isna()
+        )
     return _impute_locally(filtered, global_metrics, strategy)
 
 

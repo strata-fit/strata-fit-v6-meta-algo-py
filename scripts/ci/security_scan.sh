@@ -31,15 +31,50 @@ EOF
 trap cleanup EXIT
 trap 'error_summary="security scan failed"' ERR
 
+python_is_usable() {
+  local candidate="$1"
+  [ -n "$candidate" ] || return 1
+  command -v "$candidate" >/dev/null 2>&1 || return 1
+  "$candidate" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
+PY
+}
+
+pick_python_bootstrap() {
+  local candidate=""
+
+  for candidate in \
+    "$PYTHON_BOOTSTRAP" \
+    "${PYTHON_BIN:-}" \
+    python3.12 \
+    python3.11 \
+    python3.10 \
+    python3 \
+    python; do
+    if python_is_usable "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+PYTHON_BOOTSTRAP="$(pick_python_bootstrap || true)"
+if [ -z "$PYTHON_BOOTSTRAP" ]; then
+  echo "error: no runnable Python >= 3.10 found for security_scan.sh" >&2
+  exit 1
+fi
+
 rm -rf "$ENV_DIR"
 "$PYTHON_BOOTSTRAP" -m venv "$ENV_DIR"
 "$ENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
 
 # Match the runtime image surface, not the dev/infra-client environment.
-"$ENV_DIR/bin/python" -m pip install --no-deps -e "$ROOT_DIR"
 "$ENV_DIR/bin/python" -m pip install --no-cache-dir \
   dynaconf \
-  numpy \
+  numpy==1.26.0 \
   pandas \
   pydantic \
   PyJWT \
@@ -50,6 +85,17 @@ rm -rf "$ENV_DIR"
   "strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz"
 "$ENV_DIR/bin/python" -m pip install --no-cache-dir --no-deps \
   "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz"
+"$ENV_DIR/bin/python" -m pip install --no-deps -e "$ROOT_DIR"
+"$ENV_DIR/bin/python" - <<'PY'
+import dynaconf
+import strata_fit_v6_meta_algo_py
+from strata_fit_v6_meta_algo_py import central as meta_central
+from strata_fit_v6_meta_algo_py import methods as meta_methods
+
+assert meta_central is not None
+assert meta_methods is not None
+print("imports_ok")
+PY
 
 "$ENV_DIR/bin/python" -m pip freeze > "$SECURITY_DIR/pip_freeze.txt"
 

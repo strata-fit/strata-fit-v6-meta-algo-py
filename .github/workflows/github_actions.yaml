@@ -43,6 +43,11 @@ jobs:
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
 
+  # Validation stays manual-only for now.
+  # Manual walkthrough status:
+  # - bootstrap scripts now self-select Python >= 3.10 and use a shared env
+  # - clean-env validation passes
+  # - stress_matrix still fails in tests/infra/prepare_meta_smoke_data.py on missing D2T criteria columns
   # validation-baseline:
   #   name: Validation Baseline
   #   runs-on: ubuntu-latest

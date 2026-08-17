@@ -100,9 +100,34 @@ Validation artifacts are written under `ARTIFACTS/validation/`; security artifac
 - `scripts/ci/run_full_validation.sh`
   Runs all lanes and writes `report.json` plus `report.md`.
 
+The GitHub `validation-baseline` workflow job stays disabled for now. Use the
+manual validation scripts below until the full lane is stable enough to turn
+back on in CI.
+
 The stress matrix includes RA dashboard-style analyses for D2T survival, patient-reported burden, inflammation signal, treatment history, site heterogeneity, fan-out, high missingness, low-event edges, null-signal controls, and a small MICE smoke. The D2T gate verifies that events require all three operational criteria together: treatment history/duration, inflammatory activity, and patient/physician burden.
 
 Both `clean_env_validate.sh` and `run_infra_lane.sh` bootstrap their own disposable `/tmp` virtual environments so they do not mutate a working repo environment.
+`run_full_validation.sh` now bootstraps one validated Python environment for
+the non-Docker lanes as well, so `stress_matrix.py` and the report step do not
+depend on the host `python3` package set.
+The bootstrap helpers auto-select a runnable Python `>=3.10` when the shell's
+default `python3` is older than the project requires.
+The bootstrap smoke check follows the meta-algorithm import path (`central` /
+`methods`) rather than the validator package root, because the pinned validator
+artifact still exposes legacy Vantage6 helper imports at package-import time.
+
+Manual validation quick start:
+
+```bash
+scripts/ci/run_full_validation.sh
+```
+
+Manual validation with an explicit scratch environment:
+
+```bash
+V6_VALIDATION_ENV_DIR=/tmp/strata-meta-validation-dev \
+scripts/ci/run_full_validation.sh
+```
 
 ## Infrastructure Smoke
 

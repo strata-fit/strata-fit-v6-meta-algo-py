@@ -1,4 +1,4 @@
-FROM harbor2.vantage6.ai/infrastructure/algorithm-base:4.13
+FROM python:3.11-slim
 
 WORKDIR /app
 COPY . /app
@@ -9,7 +9,7 @@ ENV PYTHONUNBUFFERED=1
 # Install the runtime dependencies the meta-algorithm imports directly.
 RUN pip install --no-cache-dir \
     dynaconf \
-    numpy \
+    numpy==1.26.0 \
     pandas \
     pydantic \
     PyJWT \

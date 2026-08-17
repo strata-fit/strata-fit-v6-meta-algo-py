@@ -208,6 +208,15 @@ def _d2t_criteria_summary(df: pd.DataFrame) -> dict[str, Any]:
         return {"error": f"d2t-criteria-failed: {exc}"}
 
     criteria = ["D2T_crit1", "D2T_crit2", "D2T_crit3", "D2T_RA"]
+    if visits.empty:
+        return {
+            "visits": {column: 0 for column in criteria},
+            "patients": {column: 0 for column in criteria},
+            "all_three_required": True,
+        }
+    missing = [column for column in criteria if column not in visits.columns]
+    if missing:
+        return {"error": f"d2t-criteria-missing-columns: {', '.join(missing)}"}
     out: dict[str, Any] = {
         "visits": {column: int(visits[column].sum()) for column in criteria},
         "patients": {},
