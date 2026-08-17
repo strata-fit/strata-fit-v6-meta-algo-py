@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_DIR="${1:-}"
 PYTHON_BOOTSTRAP="${PYTHON_BOOTSTRAP:-${PYTHON_BIN:-python3}}"
+V6_FEDERATED_CORE_PACKAGE_SPEC="${V6_FEDERATED_CORE_PACKAGE_SPEC:-v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz}"
+STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC="${STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC:-strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz}"
 
 if [ -z "$ENV_DIR" ]; then
   echo "usage: $0 <env-dir>" >&2
@@ -57,8 +59,8 @@ rm -rf "$ENV_DIR"
   dynaconf pytest pytest-mock requests PyJWT pydantic \
   "vantage6-client==4.14.0"
 "$ENV_DIR/bin/python" -m pip install --no-deps \
-  "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz" \
-  "strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz"
+  "$V6_FEDERATED_CORE_PACKAGE_SPEC" \
+  "$STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC"
 "$ENV_DIR/bin/python" -m pip install joblib threadpoolctl
 "$ENV_DIR/bin/python" -m pip install --no-deps -e "$ROOT_DIR"
 "$ENV_DIR/bin/python" - <<'PY'

@@ -6,6 +6,8 @@ RUN_ID="${RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 SECURITY_DIR="${SECURITY_ARTIFACT_DIR:-$ROOT_DIR/ARTIFACTS/security}"
 ENV_DIR="${V6_SECURITY_ENV_DIR:-/tmp/strata-meta-security-${RUN_ID}}"
 PYTHON_BOOTSTRAP="${PYTHON_BOOTSTRAP:-${PYTHON_BIN:-python3}}"
+V6_FEDERATED_CORE_PACKAGE_SPEC="${V6_FEDERATED_CORE_PACKAGE_SPEC:-v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz}"
+STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC="${STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC:-strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz}"
 LANE_FILE="$SECURITY_DIR/security_lane.json"
 REPORT_FILE="$SECURITY_DIR/report.json"
 
@@ -82,9 +84,9 @@ rm -rf "$ENV_DIR"
   scikit-learn \
   scipy
 "$ENV_DIR/bin/python" -m pip install --no-deps \
-  "strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz"
+  "$STRATA_FIT_DATA_VALIDATOR_PACKAGE_SPEC"
 "$ENV_DIR/bin/python" -m pip install --no-deps \
-  "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz"
+  "$V6_FEDERATED_CORE_PACKAGE_SPEC"
 "$ENV_DIR/bin/python" -m pip install --no-deps -e "$ROOT_DIR"
 "$ENV_DIR/bin/python" - <<'PY'
 import dynaconf
