@@ -81,9 +81,9 @@ rm -rf "$ENV_DIR"
   requests \
   scikit-learn \
   scipy
-"$ENV_DIR/bin/python" -m pip install --no-cache-dir --no-deps \
+"$ENV_DIR/bin/python" -m pip install --no-deps \
   "strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz"
-"$ENV_DIR/bin/python" -m pip install --no-cache-dir --no-deps \
+"$ENV_DIR/bin/python" -m pip install --no-deps \
   "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz"
 "$ENV_DIR/bin/python" -m pip install --no-deps -e "$ROOT_DIR"
 "$ENV_DIR/bin/python" - <<'PY'
