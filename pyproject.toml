@@ -43,6 +43,7 @@ cox_perform_iteration_imputed = "strata_fit_v6_meta_algo_py.partial:cox_perform_
 km_get_unique_event_times_imputed = "strata_fit_v6_meta_algo_py.partial:km_get_unique_event_times_imputed"
 km_get_event_table_imputed = "strata_fit_v6_meta_algo_py.partial:km_get_event_table_imputed"
 prevalence_by_year_imputed = "strata_fit_v6_meta_algo_py.partial:prevalence_by_year_imputed"
+d2t_characteristics = "strata_fit_v6_meta_algo_py.partial:d2t_characteristics"
 cox_risk_score_range_imputed = "strata_fit_v6_meta_algo_py.partial:cox_risk_score_range_imputed"
 cox_risk_score_histogram_imputed = "strata_fit_v6_meta_algo_py.partial:cox_risk_score_histogram_imputed"
 cox_risk_group_summary_imputed = "strata_fit_v6_meta_algo_py.partial:cox_risk_group_summary_imputed"

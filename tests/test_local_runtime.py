@@ -8,7 +8,7 @@ import pandas as pd
 
 from strata_fit_v6_meta_algo_py.central import main
 from strata_fit_v6_meta_algo_py.local_client import InProcessAlgorithmClient
-from strata_fit_v6_meta_algo_py.partial import imputation_compute_partial
+from strata_fit_v6_meta_algo_py.partial import d2t_characteristics, imputation_compute_partial
 from strata_fit_v6_meta_algo_py.runtime import RunContext
 
 
@@ -45,6 +45,51 @@ def test_run_context_partial_writes_output(tmp_path: Path) -> None:
     result = imputation_compute_partial(run_context=context)
     assert output_path.exists()
     assert json.loads(output_path.read_text(encoding="utf-8")) == result
+
+
+def test_d2t_characteristics_run_context_writes_output(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    dataset_path = tmp_path / "dataset.csv"
+    output_path = tmp_path / "out.json"
+    _dataset().to_csv(dataset_path, index=False)
+    calls = []
+
+    def fake_d2t_characteristics_frame(df, **kwargs):
+        calls.append((df, kwargs))
+        return {"d2t_patients": 3, "age_count": 3}
+
+    monkeypatch.setattr(
+        "strata_fit_v6_meta_algo_py.partial.d2t_characteristics_frame",
+        fake_d2t_characteristics_frame,
+    )
+
+    context = RunContext(
+        source=tmp_path / "run_context.json",
+        payload={
+            "entrypoint": {"name": "d2t_characteristics"},
+            "arguments": {
+                "named": {
+                    "global_metrics": {},
+                    "imputation_strategy": "mean",
+                    "cohort": {},
+                    "event_definition": "d2t_ra_v2026_selected_v1",
+                }
+            },
+            "inputs": [{"uri": str(dataset_path)}],
+            "outputs": [{"uri": str(output_path)}],
+        },
+    )
+
+    result = d2t_characteristics(run_context=context)
+
+    assert output_path.exists()
+    assert json.loads(output_path.read_text(encoding="utf-8")) == result
+    assert result == {"d2t_patients": 3, "age_count": 3}
+    assert len(calls) == 1
+    assert calls[0][1]["global_metrics"] == {}
+    assert calls[0][1]["event_definition"] == "d2t_ra_v2026_selected_v1"
 
 
 def test_in_process_client_drives_central_flow(tmp_path: Path) -> None:

@@ -11,7 +11,7 @@ from typing import Any
 import jwt
 import requests
 
-from .log import error, info
+from .log import error, info, warn
 from .runtime import get_env_var
 
 
@@ -23,17 +23,39 @@ def _b64_to_json(payload: str) -> Any:
     return json.loads(base64.b64decode(payload.encode("utf-8")).decode("utf-8"))
 
 
-def _has_task_finished(status: str | None) -> bool:
-    return status in {
-        "completed",
-        "failed",
-        "start failed",
-        "non-existing Docker image",
-        "crashed",
-        "killed by user",
-        "not allowed",
-        "unknown error",
-    }
+COMPLETED_STATUS = "completed"
+TERMINAL_FAILURE_STATUSES = {
+    "failed",
+    "start failed",
+    "non-existing Docker image",
+    "crashed",
+    "killed by user",
+    "not allowed",
+    "unknown error",
+}
+
+
+class AlgorithmProxyRequestError(RuntimeError):
+    def __init__(self, endpoint: str, status_code: int, message: str) -> None:
+        super().__init__(
+            f"Request to '{endpoint}' failed with status {status_code}: {message}"
+        )
+        self.endpoint = endpoint
+        self.status_code = status_code
+        self.message = message
+
+
+def _is_transient_poll_error(exc: Exception) -> bool:
+    if isinstance(exc, AlgorithmProxyRequestError):
+        return exc.status_code >= 500
+    return isinstance(
+        exc,
+        (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.exceptions.SSLError,
+        ),
+    )
 
 
 @dataclass
@@ -104,35 +126,118 @@ class AlgorithmProxyClient:
             except Exception:
                 data = {"msg": response.text}
             msg = data.get("msg") or response.text
-            raise RuntimeError(
-                f"Request to '{endpoint}' failed with status {response.status_code}: {msg}"
-            )
+            raise AlgorithmProxyRequestError(endpoint, response.status_code, msg)
         return response.json()
+
+    def _request_with_transient_retries(
+        self,
+        endpoint: str,
+        *,
+        method: str = "get",
+        json_body: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        retry_for_seconds: float = 300.0,
+        interval: float = 1.0,
+        context: str | None = None,
+    ) -> dict[str, Any]:
+        started = time.time()
+        label = context or f"{method.upper()} {endpoint}"
+        while True:
+            try:
+                return self.request(
+                    endpoint,
+                    method=method,
+                    json_body=json_body,
+                    params=params,
+                )
+            except Exception as exc:
+                if not _is_transient_poll_error(exc):
+                    raise
+                elapsed = time.time() - started
+                if elapsed > retry_for_seconds:
+                    raise RuntimeError(
+                        f"{label} failed for {int(elapsed)}s: {exc}"
+                    ) from exc
+                warn(
+                    f"Transient proxy failure during {label} after "
+                    f"{int(elapsed)}s; retrying in {interval:.1f}s: {exc}"
+                )
+                time.sleep(interval)
+                interval = min(interval * 1.5, 60.0)
 
     def _multi_page_request(
         self, endpoint: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         params = dict(params or {})
         page = 1
-        response = self.request(endpoint, params={**params, "page": page})
+        response = self._request_with_transient_retries(
+            endpoint,
+            params={**params, "page": page},
+            context=f"GET {endpoint} page {page}",
+        )
         data = response["data"]
         links = response.get("links")
         while links and links.get("next"):
             page += 1
-            response = self.request(endpoint, params={**params, "page": page})
+            response = self._request_with_transient_retries(
+                endpoint,
+                params={**params, "page": page},
+                context=f"GET {endpoint} page {page}",
+            )
             data += response["data"]
             links = response.get("links")
         return data
 
-    def wait_for_task_completion(self, task_id: int, interval: float = 1.0) -> None:
+    def wait_for_task_completion(
+        self,
+        task_id: int,
+        interval: float = 1.0,
+        *,
+        max_poll_error_seconds: float = 300.0,
+        max_wait_seconds: float | None = None,
+    ) -> None:
         started = time.time()
+        poll_error_started: float | None = None
+        last_poll_error: Exception | None = None
         while True:
-            status_response = self.request(f"task/{task_id}/status")
+            if max_wait_seconds is not None and time.time() - started > max_wait_seconds:
+                raise RuntimeError(
+                    f"Task {task_id} did not finish within {int(max_wait_seconds)}s"
+                )
+            try:
+                status_response = self.request(f"task/{task_id}/status")
+            except Exception as exc:
+                if not _is_transient_poll_error(exc):
+                    raise
+                now = time.time()
+                if poll_error_started is None:
+                    poll_error_started = now
+                elapsed_errors = now - poll_error_started
+                last_poll_error = exc
+                if elapsed_errors > max_poll_error_seconds:
+                    raise RuntimeError(
+                        f"Task {task_id} status polling failed for "
+                        f"{int(elapsed_errors)}s: {exc}"
+                    ) from exc
+                warn(
+                    f"Transient status polling failure for task {task_id} "
+                    f"after {int(now - started)}s; retrying in {interval:.1f}s: {exc}"
+                )
+                time.sleep(interval)
+                interval = min(interval * 1.5, 60.0)
+                continue
+
+            if last_poll_error is not None:
+                info(f"Task {task_id} status polling recovered after transient errors")
+            poll_error_started = None
+            last_poll_error = None
             status = status_response.get("status")
-            if _has_task_finished(status):
+            if status == COMPLETED_STATUS:
                 elapsed = int(time.time() - started)
                 info(f"Task {task_id} finished with status '{status}' after {elapsed}s")
                 return
+            if status in TERMINAL_FAILURE_STATUSES:
+                raise RuntimeError(f"Task {task_id} finished with status '{status}'")
             time.sleep(interval)
             interval = min(interval * 1.5, 60.0)
 
@@ -169,7 +274,13 @@ class _TaskClient(_SubClient):
             body["study_id"] = self.parent.study_id
         if self.parent.store_id:
             body["store_id"] = self.parent.store_id
-        return self.parent.request("task", method="post", json_body=body)
+        return self.parent._request_with_transient_retries(
+            "task",
+            method="post",
+            json_body=body,
+            retry_for_seconds=120.0,
+            context="POST task",
+        )
 
 
 class _ResultClient(_SubClient):

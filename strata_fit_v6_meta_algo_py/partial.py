@@ -236,6 +236,28 @@ def prevalence_by_year_imputed_frame(
     )
 
 
+def d2t_characteristics_frame(
+    df: pd.DataFrame,
+    *,
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    client: Any = None,
+) -> Dict[str, Any]:
+    return run_partial_method(
+        "d2t_characteristics",
+        df=df,
+        raw_input={
+            "global_metrics": global_metrics,
+            "imputation_strategy": imputation_strategy,
+            "cohort": cohort or {},
+            "event_definition": event_definition,
+        },
+        client=client,
+    )
+
+
 def cox_risk_score_range_imputed_frame(
     df: pd.DataFrame,
     *,
@@ -628,6 +650,32 @@ def prevalence_by_year_imputed(
 ) -> Dict[str, Any]:
     result = normalize_payload(
         prevalence_by_year_imputed_frame(
+            _load_dataframe(dataset_path),
+            global_metrics=global_metrics,
+            imputation_strategy=imputation_strategy,
+            cohort=cohort,
+            event_definition=event_definition,
+        )
+    )
+    write_output(output_path, result)
+    return result
+
+
+@run_context(
+    input_uris="dataset_path",
+    output_uris="output_path",
+    named_arguments=["global_metrics", "imputation_strategy", "cohort", "event_definition"],
+)
+def d2t_characteristics(
+    dataset_path: str | Path,
+    global_metrics: Dict[str, Any],
+    imputation_strategy: str = "mean",
+    cohort: Dict[str, Any] | None = None,
+    event_definition: str = "d2t_ra_v2026_selected_v1",
+    output_path: str | Path | None = None,
+) -> Dict[str, Any]:
+    result = normalize_payload(
+        d2t_characteristics_frame(
             _load_dataframe(dataset_path),
             global_metrics=global_metrics,
             imputation_strategy=imputation_strategy,

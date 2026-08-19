@@ -14,6 +14,7 @@ __all__ = [
     "km_get_unique_event_times_imputed",
     "km_get_event_table_imputed",
     "prevalence_by_year_imputed",
+    "d2t_characteristics",
     "cox_risk_score_range_imputed",
     "cox_risk_score_histogram_imputed",
     "cox_risk_group_summary_imputed",
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
         impute_and_train_sklearn_linear,
         km_get_event_table_imputed,
         km_get_unique_event_times_imputed,
+        d2t_characteristics,
         prevalence_by_year_imputed,
         validate_partial,
     )
@@ -54,6 +56,7 @@ def __getattr__(name: str) -> Any:
         "km_get_unique_event_times_imputed",
         "km_get_event_table_imputed",
         "prevalence_by_year_imputed",
+        "d2t_characteristics",
         "cox_risk_score_range_imputed",
         "cox_risk_score_histogram_imputed",
         "cox_risk_group_summary_imputed",
