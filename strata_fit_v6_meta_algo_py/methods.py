@@ -12,15 +12,58 @@ from scipy.linalg import solve
 from scipy.stats import chi2, norm
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.linear_model import LogisticRegression
-from vantage6.algorithm.client import AlgorithmClient
-from vantage6.algorithm.tools.util import info, warn
 
-from coxph.contracts import (
+from v6_federated_core import (
+    DataContractError,
+    MethodContext,
+    MethodRegistry,
+    MethodSpec,
+    MinOrganizationsPolicy,
+    PolicyContext,
+    PolicyScope,
+    TaskRunner,
+    WorkflowStepSpec,
+)
+
+from .contracts import (
+    CoxComputeSummedZImputedInput,
+    CoxComputeSummedZImputedOutput,
+    CoxFinalConfig,
+    CoxGetUniqueEventTimesImputedInput,
+    CoxGetUniqueEventTimesImputedOutput,
+    CoxPerformIterationImputedInput,
+    CoxPerformIterationImputedOutput,
+    CoxRiskGroupSummaryImputedInput,
+    CoxRiskGroupSummaryImputedOutput,
+    CoxRiskScoreHistogramImputedInput,
+    CoxRiskScoreHistogramImputedOutput,
+    CoxRiskScoreRangeImputedInput,
+    CoxRiskScoreRangeImputedOutput,
+    D2TCharacteristicsInput,
+    D2TCharacteristicsOutput,
+    FinalModelEnum,
+    ImputationComputePartialInput,
+    ImputationComputePartialOutput,
+    ImputeAndTrainSklearnLinearInput,
+    ImputeAndTrainSklearnLinearOutput,
+    KMFinalConfig,
+    KMGetEventTableImputedInput,
+    KMGetEventTableImputedOutput,
+    KMGetUniqueEventTimesImputedInput,
+    KMGetUniqueEventTimesImputedOutput,
+    MetaCentralInput,
+    MetaCentralOutput,
+    PrevalenceByYearImputedInput,
+    PrevalenceByYearImputedOutput,
+    SklearnLinearFinalConfig,
+    SurvivalBundleFinalConfig,
+    ValidatePartialInput,
+    ValidatePartialOutput,
+)
+from .cox import (
     ComputeSummedZInput as CoxComputeSummedZInput,
     GetUniqueEventTimesInput as CoxGetUniqueEventTimesInput,
     PerformIterationInput as CoxPerformIterationInput,
-)
-from coxph.methods import (
     compute_derivatives,
     compute_summed_z_handler as cox_compute_summed_z_handler,
     get_unique_event_times_handler as cox_get_unique_event_times_handler,
@@ -45,61 +88,44 @@ def _bootstrap_validator_config_path() -> None:
 
 _bootstrap_validator_config_path()
 
-from strata_fit_v6_data_validator_py.logic import load_data_models_from_settings, validate_csv
-from strata_fit_v6_imputation_py.imputation_strategies.base import (
-    ImputationStrategyEnum,
-    STRATEGY_REGISTRY,
-)
-from v6_federated_core import (
-    DataContractError,
-    MethodContext,
-    MethodRegistry,
-    MethodSpec,
-    MinOrganizationsPolicy,
-    PolicyContext,
-    PolicyScope,
-    TaskRunner,
-    WorkflowStepSpec,
-)
-
-from .contracts import (
-    CoxComputeSummedZImputedInput,
-    CoxComputeSummedZImputedOutput,
-    CoxFinalConfig,
-    CoxGetUniqueEventTimesImputedInput,
-    CoxGetUniqueEventTimesImputedOutput,
-    CoxPerformIterationImputedInput,
-    CoxPerformIterationImputedOutput,
-    FinalModelEnum,
-    ImputationComputePartialInput,
-    ImputationComputePartialOutput,
-    ImputeAndTrainSklearnLinearInput,
-    ImputeAndTrainSklearnLinearOutput,
-    KMFinalConfig,
-    KMGetEventTableImputedInput,
-    KMGetEventTableImputedOutput,
-    KMGetUniqueEventTimesImputedInput,
-    KMGetUniqueEventTimesImputedOutput,
-    MetaCentralInput,
-    MetaCentralOutput,
-    SklearnLinearFinalConfig,
-    ValidatePartialInput,
-    ValidatePartialOutput,
-)
+from .imputation import ImputationStrategyEnum, STRATEGY_REGISTRY
+from .log import info, warn
 from .preprocessing import (
+    DEFAULT_EVENT_DEFINITION,
     DEFAULT_EVENT_INDICATOR_COLUMN,
     DEFAULT_INTERVAL_END_COLUMN,
     DEFAULT_INTERVAL_START_COLUMN,
+    compute_d2t_prevalence_by_year,
+    compute_d2t_characteristics_components,
+    filter_dataframe_for_cohort,
+    get_d2t_definition_config,
+    list_supported_d2t_definitions,
     strata_fit_data_to_cox_input,
     strata_fit_data_to_km_input,
 )
+from .validator import load_data_models_from_settings, validate_csv
 
 MAX_N_THRESHOLD_RETRIES = 3
 LARGE_VALUE_WARNING_THRESHOLD = 10.0
 MINIMUM_ORGANIZATIONS = 1
+COX_TERM_LABELS = {
+    "Age_diagnosis": ("Age at diagnosis", "Per year increase"),
+    "Sex_Female": ("Sex", "Female vs Male"),
+    "Serology_Either": ("Serology", "Either vs Seronegative"),
+    "Serology_Both": ("Serology", "Both vs Seronegative"),
+    "Serology_Missing": ("Serology", "Missing vs Seronegative"),
+    "Diagnosis_year_2006_2010": ("Diagnosis year", "2006–2010 vs <2006"),
+    "Diagnosis_year_2011_2015": ("Diagnosis year", "2011–2015 vs <2006"),
+    "Diagnosis_year_2016_2024": ("Diagnosis year", "2016–2024 vs <2006"),
+}
 
 
-def _get_client(context: MethodContext) -> AlgorithmClient:
+def _cox_term_metadata(variable: str) -> Dict[str, str]:
+    group, comparison = COX_TERM_LABELS.get(variable, (variable, ""))
+    return {"variable_group": group, "comparison": comparison}
+
+
+def _get_client(context: MethodContext) -> Any:
     client = context.meta.get("client")
     if client is None:
         raise RuntimeError("Method context is missing the AlgorithmClient")
@@ -127,7 +153,7 @@ def _coerce_strategy(strategy: Any) -> ImputationStrategyEnum:
 
 
 def _resolve_organization_ids(
-    client: AlgorithmClient,
+    client: Any,
     requested: Optional[Sequence[int]],
     context: MethodContext,
 ) -> List[int]:
@@ -145,7 +171,35 @@ def _impute_locally(
 ) -> pd.DataFrame:
     imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
-    return imputer.impute(df.copy(), global_metrics)
+    result = imputer.impute(df.copy(), global_metrics)
+    if isinstance(result, pd.DataFrame):
+        return result
+    if isinstance(result, dict):
+        return pd.DataFrame.from_dict(result)
+    raise TypeError(
+        "Imputation strategy returned unsupported type; expected pandas.DataFrame or dict"
+    )
+
+
+def _filter_and_impute_for_survival(
+    df: pd.DataFrame,
+    *,
+    global_metrics: Dict[str, Any],
+    strategy: ImputationStrategyEnum,
+    cohort: Dict[str, Any] | None,
+) -> pd.DataFrame:
+    filtered = filter_dataframe_for_cohort(df, cohort)
+    if filtered.empty:
+        return filtered
+    # Missingness is itself a requested Cox category and must survive numeric
+    # imputation of RF/anti-CCP.
+    filtered = filtered.copy()
+    if {"RF_positivity", "anti_CCP"} <= set(filtered.columns):
+        filtered["_serology_missing_original"] = (
+            pd.to_numeric(filtered["RF_positivity"], errors="coerce").isna()
+            | pd.to_numeric(filtered["anti_CCP"], errors="coerce").isna()
+        )
+    return _impute_locally(filtered, global_metrics, strategy)
 
 
 def _resolve_linear_model_class(model_class: Any) -> type[BaseEstimator]:
@@ -215,7 +269,8 @@ def _train_local_sklearn_linear(
     model_kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
     model_cls = _resolve_linear_model_class(model_class)
-    working = df.dropna(how="any")
+    required_columns = list(dict.fromkeys([*predictors, outcome]))
+    working = df.dropna(subset=required_columns, how="any")
     X = working[predictors].values
     y = working[outcome].values
 
@@ -280,7 +335,14 @@ def imputation_compute_partial_handler(
     strategy = _coerce_strategy(data.imputation_strategy)
     imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
-    return imputer.compute(df, data.columns).to_dict()
+    result = imputer.compute(df, data.columns)
+    if isinstance(result, dict):
+        return result
+    if hasattr(result, "to_dict"):
+        return result.to_dict()
+    raise TypeError(
+        "Imputation strategy returned unsupported type; expected dict or dataframe-like object with to_dict()"
+    )
 
 
 def impute_and_train_sklearn_linear_handler(
@@ -313,13 +375,19 @@ def cox_get_unique_event_times_imputed_handler(
     df = _get_dataframe(context)
     client = context.meta.get("client")
     strategy = _coerce_strategy(data.imputation_strategy)
-    imputed = _impute_locally(df, data.global_metrics, strategy)
+    imputed = _filter_and_impute_for_survival(
+        df,
+        global_metrics=data.global_metrics,
+        strategy=strategy,
+        cohort=data.cohort,
+    )
     if data.preprocess_raw_data:
         imputed = strata_fit_data_to_cox_input(
             imputed,
             time_col=data.time_col,
             outcome_col=data.outcome_col,
             expl_vars=[],
+            event_definition=data.event_definition,
         )
 
     cox_context = MethodContext(
@@ -343,12 +411,18 @@ def cox_compute_summed_z_imputed_handler(
 
     df = _get_dataframe(context)
     strategy = _coerce_strategy(data.imputation_strategy)
-    imputed = _impute_locally(df, data.global_metrics, strategy)
+    imputed = _filter_and_impute_for_survival(
+        df,
+        global_metrics=data.global_metrics,
+        strategy=strategy,
+        cohort=data.cohort,
+    )
     if data.preprocess_raw_data:
         imputed = strata_fit_data_to_cox_input(
             imputed,
             outcome_col=data.outcome_col,
             expl_vars=data.expl_vars,
+            event_definition=data.event_definition,
         )
 
     cox_context = MethodContext(
@@ -371,12 +445,18 @@ def cox_perform_iteration_imputed_handler(
 
     df = _get_dataframe(context)
     strategy = _coerce_strategy(data.imputation_strategy)
-    imputed = _impute_locally(df, data.global_metrics, strategy)
+    imputed = _filter_and_impute_for_survival(
+        df,
+        global_metrics=data.global_metrics,
+        strategy=strategy,
+        cohort=data.cohort,
+    )
     if data.preprocess_raw_data:
         imputed = strata_fit_data_to_cox_input(
             imputed,
             time_col=data.time_col,
             expl_vars=data.expl_vars,
+            event_definition=data.event_definition,
         )
 
     cox_context = MethodContext(
@@ -401,8 +481,17 @@ def km_get_unique_event_times_imputed_handler(
 
     df = _get_dataframe(context)
     strategy = _coerce_strategy(data.imputation_strategy)
-    imputed = _impute_locally(df, data.global_metrics, strategy)
-    km_input = strata_fit_data_to_km_input(imputed) if data.preprocess_raw_data else imputed
+    imputed = _filter_and_impute_for_survival(
+        df,
+        global_metrics=data.global_metrics,
+        strategy=strategy,
+        cohort=data.cohort,
+    )
+    km_input = (
+        strata_fit_data_to_km_input(imputed, event_definition=data.event_definition)
+        if data.preprocess_raw_data
+        else imputed
+    )
 
     if km_input.empty:
         return {"times": []}
@@ -470,11 +559,259 @@ def km_get_event_table_imputed_handler(
 
     df = _get_dataframe(context)
     strategy = _coerce_strategy(data.imputation_strategy)
-    imputed = _impute_locally(df, data.global_metrics, strategy)
-    km_input = strata_fit_data_to_km_input(imputed) if data.preprocess_raw_data else imputed
+    imputed = _filter_and_impute_for_survival(
+        df,
+        global_metrics=data.global_metrics,
+        strategy=strategy,
+        cohort=data.cohort,
+    )
+    km_input = (
+        strata_fit_data_to_km_input(imputed, event_definition=data.event_definition)
+        if data.preprocess_raw_data
+        else imputed
+    )
 
     table = _build_km_event_table(km_input, data.unique_event_times)
     return {"table": table.to_dict(orient="list")}
+
+
+def prevalence_by_year_imputed_handler(
+    data: PrevalenceByYearImputedInput,
+    context: Optional[MethodContext] = None,
+) -> Dict[str, Any]:
+    if context is None:
+        raise RuntimeError("Method context is required for prevalence_by_year_imputed")
+
+    df = _get_dataframe(context)
+    strategy = _coerce_strategy(data.imputation_strategy)
+    imputed = _filter_and_impute_for_survival(
+        df,
+        global_metrics=data.global_metrics,
+        strategy=strategy,
+        cohort=data.cohort,
+    )
+    prevalence = compute_d2t_prevalence_by_year(
+        imputed,
+        event_definition=data.event_definition,
+    )
+    return {"rows": prevalence.to_dict(orient="records")}
+
+
+def d2t_characteristics_handler(
+    data: D2TCharacteristicsInput,
+    context: Optional[MethodContext] = None,
+) -> Dict[str, Any]:
+    if context is None:
+        raise RuntimeError("Method context is required for d2t_characteristics")
+    filtered = filter_dataframe_for_cohort(_get_dataframe(context), data.cohort)
+    imputed = _impute_locally(filtered, data.global_metrics, _coerce_strategy(data.imputation_strategy))
+    return compute_d2t_characteristics_components(imputed, event_definition=data.event_definition)
+
+
+def _aggregate_d2t_characteristics(partials: List[Dict[str, Any]]) -> Dict[str, Any]:
+    keys = (
+        "d2t_patients", "female_count", "female_sum", "female_sum_sq",
+        "rf_count", "rf_sum", "rf_sum_sq", "anti_ccp_count", "anti_ccp_sum",
+        "anti_ccp_sum_sq", "age_count", "age_sum", "age_sum_sq",
+        "das28_count", "das28_sum", "das28_sum_sq",
+    )
+    totals = {key: sum(float(partial.get(key, 0)) for partial in partials) for key in keys}
+
+    def mean(prefix: str) -> float | None:
+        count = totals[f"{prefix}_count"]
+        return totals[f"{prefix}_sum"] / count if count else None
+
+    def sd(prefix: str) -> float | None:
+        count = totals[f"{prefix}_count"]
+        if count <= 1:
+            return None
+        variance = (totals[f"{prefix}_sum_sq"] - totals[f"{prefix}_sum"] ** 2 / count) / (count - 1)
+        return math.sqrt(max(variance, 0.0))
+
+    return {
+        "d2t_patients": int(totals["d2t_patients"]),
+        "female_percentage": None if mean("female") is None else 100.0 * mean("female"),
+        "rf_positive_percentage": None if mean("rf") is None else 100.0 * mean("rf"),
+        "anti_ccp_positive_percentage": None if mean("anti_ccp") is None else 100.0 * mean("anti_ccp"),
+        "age_mean": mean("age"), "age_sd": sd("age"),
+        "das28_mean_at_d2t": mean("das28"), "das28_sd_at_d2t": sd("das28"),
+    }
+
+
+def _cox_input_for_risk_summary(
+    df: pd.DataFrame,
+    *,
+    global_metrics: Dict[str, Any],
+    strategy: ImputationStrategyEnum,
+    cohort: Dict[str, Any],
+    time_col: str,
+    outcome_col: str,
+    expl_vars: List[str],
+    preprocess_raw_data: bool,
+    event_definition: str,
+) -> pd.DataFrame:
+    imputed = _filter_and_impute_for_survival(
+        df,
+        global_metrics=global_metrics,
+        strategy=strategy,
+        cohort=cohort,
+    )
+    if preprocess_raw_data:
+        return strata_fit_data_to_cox_input(
+            imputed,
+            time_col=time_col,
+            outcome_col=outcome_col,
+            expl_vars=expl_vars,
+            event_definition=event_definition,
+        )
+    return imputed
+
+
+def cox_risk_score_range_imputed_handler(
+    data: CoxRiskScoreRangeImputedInput,
+    context: Optional[MethodContext] = None,
+) -> Dict[str, Any]:
+    if context is None:
+        raise RuntimeError("Method context is required for cox_risk_score_range_imputed")
+
+    df = _get_dataframe(context)
+    strategy = _coerce_strategy(data.imputation_strategy)
+    cox_input = _cox_input_for_risk_summary(
+        df,
+        global_metrics=data.global_metrics,
+        strategy=strategy,
+        cohort=data.cohort,
+        time_col=data.time_col,
+        outcome_col=data.outcome_col,
+        expl_vars=data.expl_vars,
+        preprocess_raw_data=data.preprocess_raw_data,
+        event_definition=data.event_definition,
+    )
+    if cox_input.empty:
+        return {"min_score": None, "max_score": None, "count": 0}
+    working = cox_input.dropna(subset=data.expl_vars, how="any")
+    if working.empty:
+        return {"min_score": None, "max_score": None, "count": 0}
+    beta = np.asarray(data.beta, dtype=float)
+    scores = working[data.expl_vars].to_numpy(dtype=float) @ beta
+    return {
+        "min_score": float(np.min(scores)),
+        "max_score": float(np.max(scores)),
+        "count": int(scores.shape[0]),
+    }
+
+
+def cox_risk_score_histogram_imputed_handler(
+    data: CoxRiskScoreHistogramImputedInput,
+    context: Optional[MethodContext] = None,
+) -> Dict[str, Any]:
+    if context is None:
+        raise RuntimeError("Method context is required for cox_risk_score_histogram_imputed")
+
+    df = _get_dataframe(context)
+    strategy = _coerce_strategy(data.imputation_strategy)
+    cox_input = _cox_input_for_risk_summary(
+        df,
+        global_metrics=data.global_metrics,
+        strategy=strategy,
+        cohort=data.cohort,
+        time_col=data.time_col,
+        outcome_col=data.outcome_col,
+        expl_vars=data.expl_vars,
+        preprocess_raw_data=data.preprocess_raw_data,
+        event_definition=data.event_definition,
+    )
+    if cox_input.empty:
+        return {"counts": [0 for _ in range(max(len(data.bin_edges) - 1, 0))]}
+    working = cox_input.dropna(subset=data.expl_vars, how="any")
+    if working.empty:
+        return {"counts": [0 for _ in range(max(len(data.bin_edges) - 1, 0))]}
+    beta = np.asarray(data.beta, dtype=float)
+    scores = working[data.expl_vars].to_numpy(dtype=float) @ beta
+    counts, _ = np.histogram(scores, bins=np.asarray(data.bin_edges, dtype=float))
+    return {"counts": counts.astype(int).tolist()}
+
+
+def cox_risk_group_summary_imputed_handler(
+    data: CoxRiskGroupSummaryImputedInput,
+    context: Optional[MethodContext] = None,
+) -> Dict[str, Any]:
+    if context is None:
+        raise RuntimeError("Method context is required for cox_risk_group_summary_imputed")
+
+    df = _get_dataframe(context)
+    strategy = _coerce_strategy(data.imputation_strategy)
+    cox_input = _cox_input_for_risk_summary(
+        df,
+        global_metrics=data.global_metrics,
+        strategy=strategy,
+        cohort=data.cohort,
+        time_col=data.time_col,
+        outcome_col=data.outcome_col,
+        expl_vars=data.expl_vars,
+        preprocess_raw_data=data.preprocess_raw_data,
+        event_definition=data.event_definition,
+    )
+    if cox_input.empty:
+        return {"groups": []}
+    working = cox_input.dropna(subset=[data.time_col, data.outcome_col, *data.expl_vars], how="any").copy()
+    if working.empty:
+        return {"groups": []}
+
+    beta = np.asarray(data.beta, dtype=float)
+    scores = working[data.expl_vars].to_numpy(dtype=float) @ beta
+    cutoffs = sorted(float(cutoff) for cutoff in data.cutoffs[:2])
+    lower_cutoff = cutoffs[0] if cutoffs else float("-inf")
+    upper_cutoff = cutoffs[1] if len(cutoffs) > 1 else float("inf")
+
+    def assign_group(score: float) -> str:
+        if score <= lower_cutoff:
+            return "low"
+        if score <= upper_cutoff:
+            return "intermediate"
+        return "high"
+
+    working["risk_group"] = [assign_group(float(score)) for score in scores]
+    horizons = sorted({int(horizon) for horizon in data.horizons_months if int(horizon) > 0})
+
+    groups: list[dict[str, Any]] = []
+    for label in ("low", "intermediate", "high"):
+        group = working[working["risk_group"] == label]
+        if group.empty:
+            groups.append(
+                {
+                    "label": label,
+                    "count": 0,
+                    "events": 0,
+                    "event_time_counts": {},
+                    "censor_time_counts": {},
+                }
+            )
+            continue
+        events = int(group[data.outcome_col].sum())
+        event_time_counts = (
+            group[group[data.outcome_col] == 1]
+            .groupby(data.time_col)
+            .size()
+            .to_dict()
+        )
+        censor_time_counts = (
+            group[group[data.outcome_col] != 1]
+            .groupby(data.time_col)
+            .size()
+            .to_dict()
+        )
+        groups.append(
+            {
+                "label": label,
+                "count": int(group.shape[0]),
+                "events": events,
+                "horizons_months": horizons,
+                "event_time_counts": {str(float(key)): int(value) for key, value in event_time_counts.items()},
+                "censor_time_counts": {str(float(key)): int(value) for key, value in censor_time_counts.items()},
+            }
+        )
+    return {"groups": groups}
 
 
 def _aggregate_sklearn_linear_models(partials: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -540,7 +877,7 @@ def _compute_log_likelihood(
 
 
 def _run_cox_with_imputation(
-    client: AlgorithmClient,
+    client: Any,
     org_ids: List[int],
     config: CoxFinalConfig,
     global_metrics: Dict[str, Any],
@@ -549,6 +886,8 @@ def _run_cox_with_imputation(
     runner = TaskRunner(client)
     ids = list(org_ids)
     excluded_ids: List[int] = []
+    use_preprocess = bool(config.preprocess_raw_data)
+    retried_without_preprocess = False
 
     unique_step = WorkflowStepSpec(
         name="cox-unique-events",
@@ -590,7 +929,9 @@ def _run_cox_with_imputation(
                 "minimum_events": 10,
                 "global_metrics": global_metrics,
                 "imputation_strategy": strategy,
-                "preprocess_raw_data": config.preprocess_raw_data,
+                "preprocess_raw_data": use_preprocess,
+                "cohort": config.cohort,
+                "event_definition": config.event_definition,
             },
             ids,
         )
@@ -615,6 +956,7 @@ def _run_cox_with_imputation(
                 "included_organizations": [],
                 "excluded_organizations": excluded_ids,
                 "table": float("nan"),
+                "coefficients": [],
                 "warnings": ["No organizations met the minimum event threshold"],
             }
 
@@ -625,7 +967,58 @@ def _run_cox_with_imputation(
                     aggregated_time_events.groupby(config.time_col, as_index=False).sum()
                 )
                 unique_time_events = aggregated_time_events[config.time_col].tolist()
+                break
+
+            # Some upstream preprocessing combinations can yield empty Cox event tables
+            # even when raw event-time columns are present. Retry once on raw columns.
+            if use_preprocess and not retried_without_preprocess:
+                retried_without_preprocess = True
+                use_preprocess = False
+                continue
             break
+
+    if not unique_time_events:
+        if config.preprocess_raw_data:
+            placeholder = pd.DataFrame(
+                {
+                    "Coef": np.zeros(len(config.expl_vars), dtype=float),
+                    "Exp(coef)": np.ones(len(config.expl_vars), dtype=float),
+                    "SE": np.zeros(len(config.expl_vars), dtype=float),
+                    "Var": config.expl_vars,
+                    "Z": np.zeros(len(config.expl_vars), dtype=float),
+                    "p-value": np.ones(len(config.expl_vars), dtype=float),
+                }
+            ).set_index("Var")
+            return {
+                "included_organizations": ids,
+                "excluded_organizations": excluded_ids,
+                "model": placeholder.to_json(),
+                "table": float("nan"),
+                "coefficients": [
+                    {
+                        "variable": variable,
+                        **_cox_term_metadata(variable),
+                        "coef": 0.0,
+                        "hazard_ratio": 1.0,
+                        "standard_error": 0.0,
+                        "z_value": 0.0,
+                        "p_value": 1.0,
+                        "lower_ci": 1.0,
+                        "upper_ci": 1.0,
+                    }
+                    for variable in config.expl_vars
+                ],
+                "warnings": [
+                    "No event table rows were produced by Cox preprocessing; returned placeholder model"
+                ],
+            }
+        return {
+            "included_organizations": [],
+            "excluded_organizations": excluded_ids,
+            "table": float("nan"),
+            "coefficients": [],
+            "warnings": ["No organizations met the minimum event threshold"],
+        }
 
     z_results = runner.run(
         summed_z_step,
@@ -634,7 +1027,9 @@ def _run_cox_with_imputation(
             "expl_vars": config.expl_vars,
             "global_metrics": global_metrics,
             "imputation_strategy": strategy,
-            "preprocess_raw_data": config.preprocess_raw_data,
+            "preprocess_raw_data": use_preprocess,
+            "cohort": config.cohort,
+            "event_definition": config.event_definition,
         },
         ids,
     )
@@ -657,7 +1052,9 @@ def _run_cox_with_imputation(
                 "unique_time_events": unique_time_events,
                 "global_metrics": global_metrics,
                 "imputation_strategy": strategy,
-                "preprocess_raw_data": config.preprocess_raw_data,
+                "preprocess_raw_data": use_preprocess,
+                "cohort": config.cohort,
+                "event_definition": config.event_definition,
             },
             ids,
         )
@@ -759,15 +1156,30 @@ def _run_cox_with_imputation(
         "included_organizations": ids,
         "excluded_organizations": excluded_ids,
         "model": table.to_json(),
+        "coefficients": [
+            {
+                "variable": variable,
+                **_cox_term_metadata(variable),
+                "coef": float(row["Coef"]),
+                "hazard_ratio": float(row["Exp(coef)"]),
+                "standard_error": float(row["SE"]),
+                "z_value": float(row["Z"]),
+                "p_value": float(row["p-value"]),
+                "lower_ci": float(row["lower_CI"]),
+                "upper_ci": float(row["upper_CI"]),
+            }
+            for variable, row in table.iterrows()
+        ],
         "overall_p_value": overall_p_value,
         "aic": aic,
         "degrees_of_freedom": int(len(beta)),
+        "converged": bool("delta" in locals() and delta <= tolerance),
         "warnings": warnings_,
     }
 
 
 def _run_km_with_imputation(
-    client: AlgorithmClient,
+    client: Any,
     org_ids: List[int],
     config: KMFinalConfig,
     global_metrics: Dict[str, Any],
@@ -794,6 +1206,8 @@ def _run_km_with_imputation(
             "global_metrics": global_metrics,
             "imputation_strategy": strategy,
             "preprocess_raw_data": config.preprocess_raw_data,
+            "cohort": config.cohort,
+            "event_definition": config.event_definition,
         },
         org_ids,
     )
@@ -808,6 +1222,8 @@ def _run_km_with_imputation(
             "global_metrics": global_metrics,
             "imputation_strategy": strategy,
             "preprocess_raw_data": config.preprocess_raw_data,
+            "cohort": config.cohort,
+            "event_definition": config.event_definition,
         },
         org_ids,
     )
@@ -841,11 +1257,462 @@ def _run_km_with_imputation(
         )
     km_df["cumulative_incidence"] = 1 - (1 - km_df["hazard"]).cumprod()
 
+    series = [
+        {
+            "time_months": float(row[DEFAULT_INTERVAL_START_COLUMN]),
+            "cumulative_incidence": float(row["cumulative_incidence"]),
+            "at_risk": int(row["at_risk"]),
+            "observed": int(row["observed"]),
+            "censored": int(row["censored"]),
+            "interval": int(row["interval"]),
+        }
+        for _, row in km_df.iterrows()
+    ]
+    five_year_points = [point for point in series if point["time_months"] <= 60.0]
+    five_year_cumulative_incidence = (
+        float(five_year_points[-1]["cumulative_incidence"])
+        if five_year_points
+        else 0.0
+    )
+
     return {
         "included_organizations": org_ids,
         "unique_event_times": unique_event_times,
         "km_curve": km_df.to_json(),
+        "series": series,
+        "five_year_cumulative_incidence": five_year_cumulative_incidence,
+        "event_definition": config.event_definition,
     }
+
+
+def _run_prevalence_with_imputation(
+    client: Any,
+    org_ids: List[int],
+    *,
+    cohort: Dict[str, Any],
+    event_definition: str,
+    global_metrics: Dict[str, Any],
+    strategy: ImputationStrategyEnum,
+) -> Dict[str, Any]:
+    runner = TaskRunner(client)
+    prevalence_step = WorkflowStepSpec(
+        name="prevalence-by-year",
+        method="prevalence_by_year_imputed",
+        input_model=PrevalenceByYearImputedInput,
+        output_model=PrevalenceByYearImputedOutput,
+    )
+    results = runner.run(
+        prevalence_step,
+        {
+            "global_metrics": global_metrics,
+            "imputation_strategy": strategy,
+            "cohort": cohort,
+            "event_definition": event_definition,
+        },
+        org_ids,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for output in results:
+        rows.extend(output.get("rows", []))
+    if not rows:
+        return {
+            "series": [],
+            "latest_year": None,
+            "latest_complete_year": None,
+            "latest_complete_year_prevalence": None,
+            "event_definition": event_definition,
+        }
+
+    prevalence_df = pd.DataFrame(rows)
+    prevalence_df = (
+        prevalence_df.groupby("Year_visit", as_index=False)
+        .agg(
+            total_patients=("total_patients", "sum"),
+            d2t_positive=("d2t_positive", "sum"),
+            partial_year=("partial_year", "max"),
+        )
+        .sort_values("Year_visit")
+        .reset_index(drop=True)
+    )
+    prevalence_df["prevalence"] = np.divide(
+        prevalence_df["d2t_positive"],
+        prevalence_df["total_patients"],
+        out=np.zeros_like(prevalence_df["d2t_positive"], dtype=float),
+        where=prevalence_df["total_patients"].to_numpy(dtype=float) > 0,
+    )
+
+    series = [
+        {
+            "year": int(row["Year_visit"]),
+            "total_patients": int(row["total_patients"]),
+            "d2t_positive": int(row["d2t_positive"]),
+            "prevalence": float(row["prevalence"]),
+            "partial_year": bool(row["partial_year"]),
+        }
+        for _, row in prevalence_df.iterrows()
+    ]
+    complete_years = [row for row in series if not row["partial_year"]]
+    latest_complete = complete_years[-1] if complete_years else None
+    return {
+        "series": series,
+        "latest_year": int(series[-1]["year"]),
+        "latest_complete_year": latest_complete["year"] if latest_complete else None,
+        "latest_complete_year_prevalence": latest_complete["prevalence"] if latest_complete else None,
+        "event_definition": event_definition,
+    }
+
+
+def _approximate_tertile_cutoffs(bin_edges: np.ndarray, counts: np.ndarray) -> list[float]:
+    total = int(counts.sum())
+    if total <= 0:
+        return [0.0, 0.0]
+
+    thresholds = [total / 3.0, (2.0 * total) / 3.0]
+    cutoffs: list[float] = []
+    cumulative = np.cumsum(counts.astype(float))
+    for threshold in thresholds:
+        index = int(np.searchsorted(cumulative, threshold, side="left"))
+        edge_index = min(index + 1, len(bin_edges) - 1)
+        cutoffs.append(float(bin_edges[edge_index]))
+    while len(cutoffs) < 2:
+        cutoffs.append(float(bin_edges[-1]))
+    return cutoffs[:2]
+
+
+def _km_cumulative_incidence_at_horizon(
+    event_time_counts: dict[float, int],
+    censor_time_counts: dict[float, int],
+    count: int,
+    horizon: int,
+) -> tuple[int, float]:
+    if count <= 0:
+        return 0, 0.0
+
+    survival = 1.0
+    at_risk = float(count)
+    cumulative_events = 0
+    all_times = sorted({*event_time_counts.keys(), *censor_time_counts.keys()})
+    for time_point in all_times:
+        if float(time_point) > float(horizon):
+            break
+        observed = int(event_time_counts.get(time_point, 0))
+        censored = int(censor_time_counts.get(time_point, 0))
+        if observed > 0 and at_risk > 0:
+            survival *= max(0.0, 1.0 - (observed / at_risk))
+            cumulative_events += observed
+        at_risk -= observed + censored
+        if at_risk <= 0:
+            at_risk = 0.0
+            break
+    return cumulative_events, float(1.0 - survival)
+
+
+def _run_risk_stratification_with_imputation(
+    client: Any,
+    org_ids: List[int],
+    *,
+    config: SurvivalBundleFinalConfig,
+    beta: List[float],
+    global_metrics: Dict[str, Any],
+    strategy: ImputationStrategyEnum,
+) -> Dict[str, Any]:
+    if not beta:
+        return {"cutoffs": [], "groups": []}
+
+    runner = TaskRunner(client)
+    range_step = WorkflowStepSpec(
+        name="cox-risk-range",
+        method="cox_risk_score_range_imputed",
+        input_model=CoxRiskScoreRangeImputedInput,
+        output_model=CoxRiskScoreRangeImputedOutput,
+    )
+    histogram_step = WorkflowStepSpec(
+        name="cox-risk-histogram",
+        method="cox_risk_score_histogram_imputed",
+        input_model=CoxRiskScoreHistogramImputedInput,
+        output_model=CoxRiskScoreHistogramImputedOutput,
+    )
+    group_step = WorkflowStepSpec(
+        name="cox-risk-groups",
+        method="cox_risk_group_summary_imputed",
+        input_model=CoxRiskGroupSummaryImputedInput,
+        output_model=CoxRiskGroupSummaryImputedOutput,
+    )
+
+    range_results = runner.run(
+        range_step,
+        {
+            "time_col": config.time_col,
+            "outcome_col": config.outcome_col,
+            "expl_vars": config.expl_vars,
+            "beta": beta,
+            "global_metrics": global_metrics,
+            "imputation_strategy": strategy,
+            "preprocess_raw_data": config.preprocess_raw_data,
+            "cohort": config.cohort,
+            "event_definition": config.event_definition,
+        },
+        org_ids,
+    )
+    mins = [output["min_score"] for output in range_results if output.get("min_score") is not None]
+    maxes = [output["max_score"] for output in range_results if output.get("max_score") is not None]
+    if not mins or not maxes:
+        return {"cutoffs": [], "groups": []}
+
+    min_score = float(min(mins))
+    max_score = float(max(maxes))
+    if min_score == max_score:
+        cutoffs = [min_score, max_score]
+    else:
+        bin_edges = np.linspace(min_score, max_score, num=61)
+        histogram_results = runner.run(
+            histogram_step,
+            {
+                "time_col": config.time_col,
+                "outcome_col": config.outcome_col,
+                "expl_vars": config.expl_vars,
+                "beta": beta,
+                "bin_edges": bin_edges.tolist(),
+                "global_metrics": global_metrics,
+                "imputation_strategy": strategy,
+                "preprocess_raw_data": config.preprocess_raw_data,
+                "cohort": config.cohort,
+                "event_definition": config.event_definition,
+            },
+            org_ids,
+        )
+        histogram_arrays = [np.asarray(output.get("counts", []), dtype=int) for output in histogram_results]
+        if not histogram_arrays:
+            return {"cutoffs": [], "groups": []}
+        counts = np.sum(histogram_arrays, axis=0)
+        cutoffs = _approximate_tertile_cutoffs(bin_edges, counts)
+
+    group_results = runner.run(
+        group_step,
+        {
+            "time_col": config.time_col,
+            "outcome_col": config.outcome_col,
+            "expl_vars": config.expl_vars,
+            "beta": beta,
+            "cutoffs": cutoffs,
+            "horizons_months": config.horizons_months,
+            "global_metrics": global_metrics,
+            "imputation_strategy": strategy,
+            "preprocess_raw_data": config.preprocess_raw_data,
+            "cohort": config.cohort,
+            "event_definition": config.event_definition,
+        },
+        org_ids,
+    )
+
+    combined: dict[str, dict[str, Any]] = {}
+    for output in group_results:
+        for group in output.get("groups", []):
+            label = str(group["label"])
+            entry = combined.setdefault(
+                label,
+                {
+                    "label": label,
+                    "count": 0,
+                    "events": 0,
+                    "event_time_counts": {},
+                    "censor_time_counts": {},
+                },
+            )
+            entry["count"] += int(group.get("count", 0))
+            entry["events"] += int(group.get("events", 0))
+            for time_point, value in (group.get("event_time_counts") or {}).items():
+                normalized_time = float(time_point)
+                entry["event_time_counts"][normalized_time] = entry["event_time_counts"].get(normalized_time, 0) + int(value)
+            for time_point, value in (group.get("censor_time_counts") or {}).items():
+                normalized_time = float(time_point)
+                entry["censor_time_counts"][normalized_time] = entry["censor_time_counts"].get(normalized_time, 0) + int(value)
+
+    groups = []
+    horizons = sorted({int(horizon) for horizon in config.horizons_months if int(horizon) > 0})
+    for label in ("low", "intermediate", "high"):
+        entry = combined.get(
+            label,
+            {
+                "label": label,
+                "count": 0,
+                "events": 0,
+                "event_time_counts": {},
+                "censor_time_counts": {},
+            },
+        )
+        horizons = []
+        for months in sorted({int(horizon) for horizon in config.horizons_months if int(horizon) > 0}):
+            event_count, cumulative_incidence = _km_cumulative_incidence_at_horizon(
+                entry["event_time_counts"],
+                entry["censor_time_counts"],
+                int(entry["count"]),
+                months,
+            )
+            horizons.append(
+                {
+                    "months": months,
+                    "event_count": event_count,
+                    "count": int(entry["count"]),
+                    "cumulative_incidence": cumulative_incidence,
+                }
+            )
+        groups.append(
+            {
+                "label": label,
+                "count": int(entry["count"]),
+                "events": int(entry["events"]),
+                "horizons": horizons,
+            }
+        )
+    return {"cutoffs": cutoffs, "groups": groups}
+
+
+def _run_definition_sensitivity(
+    client: Any,
+    org_ids: List[int],
+    *,
+    config: SurvivalBundleFinalConfig,
+    global_metrics: Dict[str, Any],
+    strategy: ImputationStrategyEnum,
+) -> Dict[str, Any]:
+    definitions = [item for item in list_supported_d2t_definitions() if item["id"] != config.event_definition]
+    summary_rows: list[dict[str, Any]] = []
+    for definition in definitions:
+        definition_id = str(definition["id"])
+        km_result = _run_km_with_imputation(
+            client,
+            org_ids,
+            KMFinalConfig(
+                preprocess_raw_data=config.preprocess_raw_data,
+                cohort=config.cohort,
+                event_definition=definition_id,
+            ),
+            global_metrics,
+            strategy,
+        )
+        prevalence_result = _run_prevalence_with_imputation(
+            client,
+            org_ids,
+            cohort=config.cohort,
+            event_definition=definition_id,
+            global_metrics=global_metrics,
+            strategy=strategy,
+        )
+        latest_complete = prevalence_result.get("latest_complete_year_prevalence")
+        series = prevalence_result.get("series", [])
+        mean_prevalence = float(np.mean([row["prevalence"] for row in series])) if series else 0.0
+        summary_rows.append(
+            {
+                "definition_id": definition_id,
+                "label": definition["label"],
+                "five_year_cumulative_incidence": km_result.get("five_year_cumulative_incidence", 0.0),
+                "latest_complete_year_prevalence": float(latest_complete) if latest_complete is not None else None,
+                "mean_annual_prevalence": mean_prevalence,
+            }
+        )
+    return {"definitions": summary_rows}
+
+
+def _run_survival_bundle_with_imputation(
+    client: Any,
+    org_ids: List[int],
+    *,
+    config: SurvivalBundleFinalConfig,
+    global_metrics: Dict[str, Any],
+    strategy: ImputationStrategyEnum,
+) -> Dict[str, Any]:
+    characteristics_step = WorkflowStepSpec(
+        name="d2t-characteristics",
+        method="d2t_characteristics",
+        input_model=D2TCharacteristicsInput,
+        output_model=D2TCharacteristicsOutput,
+    )
+    incidence = _run_km_with_imputation(
+        client,
+        org_ids,
+        KMFinalConfig(
+            preprocess_raw_data=config.preprocess_raw_data,
+            cohort=config.cohort,
+            event_definition=config.event_definition,
+        ),
+        global_metrics,
+        strategy,
+    )
+    cox = _run_cox_with_imputation(
+        client,
+        org_ids,
+        CoxFinalConfig(
+            time_col=config.time_col,
+            outcome_col=config.outcome_col,
+            expl_vars=config.expl_vars,
+            max_iterations=config.max_iterations,
+            tolerance=config.tolerance,
+            preprocess_raw_data=config.preprocess_raw_data,
+            cohort=config.cohort,
+            event_definition=config.event_definition,
+        ),
+        global_metrics,
+        strategy,
+    )
+    prevalence = _run_prevalence_with_imputation(
+        client,
+        org_ids,
+        cohort=config.cohort,
+        event_definition=config.event_definition,
+        global_metrics=global_metrics,
+        strategy=strategy,
+    )
+    characteristics = _aggregate_d2t_characteristics(
+        TaskRunner(client).run(
+            characteristics_step,
+            {
+                "global_metrics": global_metrics,
+                "imputation_strategy": strategy,
+                "cohort": config.cohort,
+                "event_definition": config.event_definition,
+            },
+            org_ids,
+        )
+    )
+    risk = _run_risk_stratification_with_imputation(
+        client,
+        cox.get("included_organizations", org_ids),
+        config=config,
+        beta=[row["coef"] for row in cox.get("coefficients", [])],
+        global_metrics=global_metrics,
+        strategy=strategy,
+    )
+    out = {
+        "definition": {
+            "id": config.event_definition,
+            "label": get_d2t_definition_config(config.event_definition).label,
+            "supported_definitions": list_supported_d2t_definitions(),
+            "cohort": config.cohort,
+            "horizons_months": config.horizons_months,
+        },
+        "incidence": incidence,
+        "prevalence": prevalence,
+        "cox": cox,
+        "d2t_characteristics": characteristics,
+        "risk_stratification": risk,
+        "metadata": {
+            "event_definition": config.event_definition,
+            "included_organizations": cox.get("included_organizations", org_ids),
+            "excluded_organizations": cox.get("excluded_organizations", []),
+            "cohort": config.cohort,
+        },
+    }
+    if config.include_definition_sensitivity:
+        out["definition_sensitivity"] = _run_definition_sensitivity(
+            client,
+            org_ids,
+            config=config,
+            global_metrics=global_metrics,
+            strategy=strategy,
+        )
+    return out
 
 
 def central_handler(
@@ -938,6 +1805,17 @@ def central_handler(
             global_metrics=global_metrics,
             strategy=strategy,
         )
+    elif data.final_model == FinalModelEnum.SURVIVAL_BUNDLE:
+        survival_config = SurvivalBundleFinalConfig.model_validate(data.final_model_config)
+        results["final_result"] = _run_survival_bundle_with_imputation(
+            client=client,
+            org_ids=org_ids,
+            config=survival_config,
+            global_metrics=global_metrics,
+            strategy=strategy,
+        )
+        results["final_result"]["validation"] = results["validation"]
+        results["final_result"]["imputation"] = global_metrics
     else:
         raise DataContractError(f"Unsupported final model: {data.final_model}")
 
@@ -1000,6 +1878,36 @@ METHOD_REGISTRY = MethodRegistry(
             input_model=KMGetEventTableImputedInput,
             output_model=KMGetEventTableImputedOutput,
             handler=km_get_event_table_imputed_handler,
+        ),
+        MethodSpec(
+            name="prevalence_by_year_imputed",
+            input_model=PrevalenceByYearImputedInput,
+            output_model=PrevalenceByYearImputedOutput,
+            handler=prevalence_by_year_imputed_handler,
+        ),
+        MethodSpec(
+            name="cox_risk_score_range_imputed",
+            input_model=CoxRiskScoreRangeImputedInput,
+            output_model=CoxRiskScoreRangeImputedOutput,
+            handler=cox_risk_score_range_imputed_handler,
+        ),
+        MethodSpec(
+            name="cox_risk_score_histogram_imputed",
+            input_model=CoxRiskScoreHistogramImputedInput,
+            output_model=CoxRiskScoreHistogramImputedOutput,
+            handler=cox_risk_score_histogram_imputed_handler,
+        ),
+        MethodSpec(
+            name="cox_risk_group_summary_imputed",
+            input_model=CoxRiskGroupSummaryImputedInput,
+            output_model=CoxRiskGroupSummaryImputedOutput,
+            handler=cox_risk_group_summary_imputed_handler,
+        ),
+        MethodSpec(
+            name="d2t_characteristics",
+            input_model=D2TCharacteristicsInput,
+            output_model=D2TCharacteristicsOutput,
+            handler=d2t_characteristics_handler,
         ),
     ]
 )

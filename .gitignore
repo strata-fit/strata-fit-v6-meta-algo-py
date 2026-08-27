@@ -106,6 +106,8 @@ venv.bak/
 .vscode/
 .idea/
 .DS_Store
+.docker-local-deps-*/
 
 .psi-ignore
 report.md
+ARTIFACTS/**/report.*

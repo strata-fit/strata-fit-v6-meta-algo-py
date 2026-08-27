@@ -5,26 +5,51 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "strata_fit_v6_meta_algo_py"
 version = "0.1.0"
-description = "Meta‑algorithm orchestrating STRATA‑FIT v6 data validation, imputation, and federated Cox/sklearn-linear models."
+description = "Meta-algorithm orchestrating STRATA-FIT v6 data validation, imputation, and federated Cox/sklearn-linear models."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "Proprietary"}
+license = { text = "Proprietary" }
 authors = [{name = "Strata-Fit Team"}]
 dependencies = [
-    "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/refs/heads/main.tar.gz",
-    "strata-fit-v6-km-py @ https://github.com/strata-fit/strata-fit-v6-km-py/archive/refs/heads/main.tar.gz",
+    "v6-federated-algo-core-py @ https://github.com/mdw-nl/v6-federated-algo-core-v6/archive/c29dd63f40c6e3997a0865cb0cbc81dd9ce02a60.tar.gz",
+    "strata-fit-v6-data-validator-py @ https://github.com/strata-fit/strata-fit-data-schema/archive/c77d319b6539bdc48314738981b5bde478d2bacd.tar.gz",
+    "pydantic>=2.5.3",
     "pandas>=2.1.4",
-    "numpy>=1.26.0",
-    "polars>=1.0.0",
+    "numpy==1.26.0",
     "scipy>=1.11.0",
-    "vantage6-algorithm-tools==4.13.3",
+    "scikit-learn>=1.3.0",
+    "requests>=2.31.0",
+    "PyJWT>=2.8.0",
+    "dynaconf",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.4",
     "pytest-mock>=3.10",
+    "vantage6-client==4.14.0",
+    "pip-audit>=2.7",
+    "bandit>=1.7",
 ]
+
+[project.entry-points."run_context"]
+main = "strata_fit_v6_meta_algo_py.central:main"
+validate_partial = "strata_fit_v6_meta_algo_py.partial:validate_partial"
+imputation_compute_partial = "strata_fit_v6_meta_algo_py.partial:imputation_compute_partial"
+impute_and_train_sklearn_linear = "strata_fit_v6_meta_algo_py.partial:impute_and_train_sklearn_linear"
+cox_get_unique_event_times_imputed = "strata_fit_v6_meta_algo_py.partial:cox_get_unique_event_times_imputed"
+cox_compute_summed_z_imputed = "strata_fit_v6_meta_algo_py.partial:cox_compute_summed_z_imputed"
+cox_perform_iteration_imputed = "strata_fit_v6_meta_algo_py.partial:cox_perform_iteration_imputed"
+km_get_unique_event_times_imputed = "strata_fit_v6_meta_algo_py.partial:km_get_unique_event_times_imputed"
+km_get_event_table_imputed = "strata_fit_v6_meta_algo_py.partial:km_get_event_table_imputed"
+prevalence_by_year_imputed = "strata_fit_v6_meta_algo_py.partial:prevalence_by_year_imputed"
+d2t_characteristics = "strata_fit_v6_meta_algo_py.partial:d2t_characteristics"
+cox_risk_score_range_imputed = "strata_fit_v6_meta_algo_py.partial:cox_risk_score_range_imputed"
+cox_risk_score_histogram_imputed = "strata_fit_v6_meta_algo_py.partial:cox_risk_score_histogram_imputed"
+cox_risk_group_summary_imputed = "strata_fit_v6_meta_algo_py.partial:cox_risk_group_summary_imputed"
+
+[project.scripts]
+strata-fit-v6-meta-dispatch = "strata_fit_v6_meta_algo_py.container:main"
 
 [tool.setuptools]
 include-package-data = true

@@ -3,13 +3,14 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, RootModel
 
-from strata_fit_v6_imputation_py.imputation_strategies.base import ImputationStrategyEnum
+from .imputation import ImputationStrategyEnum
 
 
 class FinalModelEnum(str, Enum):
     SKLEARN_LINEAR = "sklearn_linear"
     COX = "cox"
     KM = "km"
+    SURVIVAL_BUNDLE = "survival_bundle"
 
 
 class SklearnLinearFinalConfig(BaseModel):
@@ -27,10 +28,39 @@ class CoxFinalConfig(BaseModel):
     max_iterations: int = 10
     tolerance: float = 1e-6
     preprocess_raw_data: bool = False
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
 
 
 class KMFinalConfig(BaseModel):
     preprocess_raw_data: bool = True
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
+
+
+class SurvivalBundleFinalConfig(BaseModel):
+    time_col: str = "time"
+    outcome_col: str = "event"
+    expl_vars: List[str] = Field(
+        default_factory=lambda: [
+            "Age_diagnosis",
+            "Sex_Female",
+            "Serology_Either",
+            "Serology_Both",
+            "Serology_Missing",
+            "Diagnosis_year_2006_2010",
+            "Diagnosis_year_2011_2015",
+            "Diagnosis_year_2016_2024",
+        ]
+    )
+    max_iterations: int = 10
+    tolerance: float = 1e-6
+    preprocess_raw_data: bool = True
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
+    horizons_months: List[int] = Field(default_factory=lambda: [12, 24, 60])
+    include_definition_sensitivity: bool = False
+    minimum_events: int = 10
 
 
 class MetaCentralInput(BaseModel):
@@ -67,7 +97,7 @@ class ImputationComputePartialInput(BaseModel):
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
 
 
-class ImputationComputePartialOutput(RootModel[Dict[str, Dict[Any, Any]]]):
+class ImputationComputePartialOutput(RootModel[Dict[str, Any]]):
     pass
 
 
@@ -93,6 +123,8 @@ class CoxGetUniqueEventTimesImputedInput(BaseModel):
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
     minimum_events: int = 10
     preprocess_raw_data: bool = False
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
 
 
 class CoxGetUniqueEventTimesImputedOutput(BaseModel):
@@ -106,6 +138,8 @@ class CoxComputeSummedZImputedInput(BaseModel):
     global_metrics: Dict[str, Any]
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
     preprocess_raw_data: bool = False
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
 
 
 class CoxComputeSummedZImputedOutput(BaseModel):
@@ -120,6 +154,8 @@ class CoxPerformIterationImputedInput(BaseModel):
     global_metrics: Dict[str, Any]
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
     preprocess_raw_data: bool = False
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
 
 
 class CoxPerformIterationImputedOutput(BaseModel):
@@ -132,6 +168,8 @@ class KMGetUniqueEventTimesImputedInput(BaseModel):
     global_metrics: Dict[str, Any]
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
     preprocess_raw_data: bool = True
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
 
 
 class KMGetUniqueEventTimesImputedOutput(BaseModel):
@@ -143,7 +181,84 @@ class KMGetEventTableImputedInput(BaseModel):
     global_metrics: Dict[str, Any]
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
     preprocess_raw_data: bool = True
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
 
 
 class KMGetEventTableImputedOutput(BaseModel):
     table: Dict[str, List[float]]
+
+
+class PrevalenceByYearImputedInput(BaseModel):
+    global_metrics: Dict[str, Any]
+    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
+
+
+class PrevalenceByYearImputedOutput(BaseModel):
+    rows: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class CoxRiskScoreRangeImputedInput(BaseModel):
+    time_col: str
+    outcome_col: str
+    expl_vars: List[str] = Field(min_length=1)
+    beta: List[float]
+    global_metrics: Dict[str, Any]
+    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    preprocess_raw_data: bool = False
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
+
+
+class CoxRiskScoreRangeImputedOutput(BaseModel):
+    min_score: float | None = None
+    max_score: float | None = None
+    count: int = 0
+
+
+class CoxRiskScoreHistogramImputedInput(BaseModel):
+    time_col: str
+    outcome_col: str
+    expl_vars: List[str] = Field(min_length=1)
+    beta: List[float]
+    bin_edges: List[float] = Field(min_length=2)
+    global_metrics: Dict[str, Any]
+    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    preprocess_raw_data: bool = False
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
+
+
+class CoxRiskScoreHistogramImputedOutput(BaseModel):
+    counts: List[int] = Field(default_factory=list)
+
+
+class CoxRiskGroupSummaryImputedInput(BaseModel):
+    time_col: str
+    outcome_col: str
+    expl_vars: List[str] = Field(min_length=1)
+    beta: List[float]
+    cutoffs: List[float] = Field(default_factory=list)
+    horizons_months: List[int] = Field(default_factory=list)
+    global_metrics: Dict[str, Any]
+    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    preprocess_raw_data: bool = False
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
+
+
+class CoxRiskGroupSummaryImputedOutput(BaseModel):
+    groups: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class D2TCharacteristicsInput(BaseModel):
+    global_metrics: Dict[str, Any]
+    imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    cohort: Dict[str, Any] = Field(default_factory=dict)
+    event_definition: str = "d2t_ra_v2026_selected_v1"
+
+
+class D2TCharacteristicsOutput(RootModel[Dict[str, float | int]]):
+    pass
