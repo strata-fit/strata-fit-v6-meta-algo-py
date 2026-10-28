@@ -1,0 +1,70 @@
+{
+  "all_missing_patient": {
+    "actual_mean": 1.3333333333333333,
+    "observed_mean": 4.0,
+    "payload_keys": [
+      "pat_ID",
+      "x",
+      "n"
+    ]
+  },
+  "partial_missing": {
+    "actual_mean": 4.0,
+    "observed_mean": 6.0,
+    "payload_keys": [
+      "pat_ID",
+      "x",
+      "n"
+    ]
+  },
+  "categorical": [
+    {
+      "Sex": 0.6666666666666666,
+      "RF_positivity": 0.0,
+      "anti_CCP": 0.0,
+      "Year_diagnosis": 2010.4,
+      "Sex_Female": 0.0,
+      "Serology_Either": 0.0,
+      "Serology_Both": 0.0,
+      "Serology_Missing": 0.0,
+      "Diagnosis_year_2006_2010": 0.0,
+      "Diagnosis_year_2011_2015": 0.0,
+      "Diagnosis_year_2016_2024": 0.0
+    }
+  ],
+  "derivatives": {
+    "gradient_error": 3.2318752118953853e-09,
+    "hessian_error": 0.00027657524389468335
+  },
+  "cox_complete": {
+    "reference_beta": 0.8081797258430728,
+    "pooled_beta": 0.80818,
+    "federated_beta": 0.80818,
+    "converged": true
+  },
+  "one_iteration": {
+    "beta": 0.83339,
+    "reported_aic": 353.69858013744306,
+    "reference_aic_at_reported_beta": 363.7440797415022,
+    "converged": false
+  },
+  "missing_cox": {
+    "events_counted": 51,
+    "complete_case_events": 50
+  },
+  "small_node_partition": {
+    "included": [
+      1
+    ],
+    "excluded": [
+      0
+    ],
+    "beta": 0.90734,
+    "pooled_beta": 0.80818,
+    "pooled_beta_included_patients_only": 0.90734
+  },
+  "risk_set_differencing": {
+    "recovered_x": -0.8015313304247886,
+    "true_x": -0.8015313304247886
+  }
+}
