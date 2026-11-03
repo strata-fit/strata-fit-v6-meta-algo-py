@@ -1,4 +1,7 @@
-"""Preprocessing adapters for STRATA-FIT raw data in the meta algorithm."""
+"""Preprocessing adapters for STRATA-FIT raw data in the meta algorithm.
+        Oct/Nov 2026 (C. Ripepi): D2T criteria and pre-2006 handling aligned with the local incidence and prevalence script
+        Changes are marked "Local V10.1"
+"""
 
 from __future__ import annotations
 
@@ -33,7 +36,7 @@ class D2TDefinitionConfig:
     require_problematic: bool = True
     vas_threshold: float = 50.0
     require_time_since_last_dmard: bool = True
-    activity_after_dmard_window: bool = True
+    activity_after_dmard_window: bool = False # no waiting window in local
     within_years_from_diagnosis: int | None = None
 
 
@@ -105,6 +108,7 @@ def compute_unique_dmards(df: pd.DataFrame) -> pd.Series:
     current_b = _safe_numeric(df["bDMARD"]).fillna(0).gt(0).astype(int)
     current_t = df["tsDMARD_binary"].fillna(0).gt(0).astype(int)
     df["history_moa_floor"] = prev_b.fillna(0) + prev_t.fillna(0) + current_b + current_t
+    prev_history = (prev_b.fillna(0) + prev_t.fillna(0)).astype(int)  # Previous b/tsDMARDs before cohort entry (N_prev_bDMARD + N_prev_tsDMARD)
 
     values: dict[int, int] = {}
     for _, sub_df in df.groupby("pat_ID", sort=False):
@@ -119,7 +123,7 @@ def compute_unique_dmards(df: pd.DataFrame) -> pd.Series:
                 seen.add(("b", int(b_dmard)))
             if pd.notna(ts_dmard) and float(ts_dmard) > 0:
                 seen.add(("t", 1))
-            values[idx] = max(len(seen), int(history_floor))
+            values[idx] = len(seen) + int(prev_history[idx])    # Local V10.1: previous b/tsDMARDs are added to the distinct drugs seen so far
 
     return pd.Series(values).reindex(df.index)
 
@@ -150,50 +154,55 @@ def get_d2t_definition_config(identifier: str = DEFAULT_EVENT_DEFINITION) -> D2T
 def list_supported_d2t_definitions() -> list[dict[str, Any]]:
     return [{"id": config.identifier, "label": config.label} for config in DEFINITION_SENSITIVITY_CONFIGS]
 
-
+YEAR_FLOOR = 2006 # Diagnoses are no longer shifted to 2006; visits before 2006 are dropped after the D2T flags are computed
 def _normalize_year_floor(df: pd.DataFrame) -> pd.DataFrame:
     ordered = df.sort_values(["pat_ID", "Visit_months_from_diagnosis"]).copy()
-    shift_mask = ordered["Year_diagnosis"] < 2006
-    year_shift = 2006 - ordered.loc[shift_mask, "Year_diagnosis"]
-    ordered.loc[shift_mask, "Visit_months_from_diagnosis"] = (
-        ordered.loc[shift_mask, "Visit_months_from_diagnosis"] - year_shift * 12
-    )
-    ordered.loc[shift_mask, "Year_diagnosis"] = 2006
-    ordered = ordered[ordered["Visit_months_from_diagnosis"] >= 0].reset_index(drop=True)
+    # shift_mask = ordered["Year_diagnosis"] < 2006
+    # year_shift = 2006 - ordered.loc[shift_mask, "Year_diagnosis"]
+    # ordered.loc[shift_mask, "Visit_months_from_diagnosis"] = (
+    #     ordered.loc[shift_mask, "Visit_months_from_diagnosis"] - year_shift * 12
+    # )
+    # ordered.loc[shift_mask, "Year_diagnosis"] = 2006
+    # ordered = ordered[ordered["Visit_months_from_diagnosis"] >= 0].reset_index(drop=True)
     ordered["Year_visit"] = ordered["Year_diagnosis"] + (
         ordered["Visit_months_from_diagnosis"] / 12.0
     ).astype(int)
+    ordered = ordered[
+        (ordered["Visit_months_from_diagnosis"] >= 0 ) # no pre-diagnosis visits
+        & (ordered["Year_visit"] >= YEAR_FLOOR)     # no visits before 2006
+        ].reset_index(drop=True)
     return ordered
 
-
-def _apply_patient_eligibility(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    patient_summary = (
-        df.groupby("pat_ID", as_index=False)
-        .agg(
-            max_followup=("Visit_months_from_diagnosis", "max"),
-            latest_year=("Year_visit", "max"),
-        )
-    )
-    eligible_ids = patient_summary[
-        (patient_summary["max_followup"] >= 24.0) & (patient_summary["latest_year"] >= 2010)
-    ]["pat_ID"]
-    return df[df["pat_ID"].isin(set(eligible_ids.tolist()))].copy()
+## Step pre-computed in dataset creation 
+# def _apply_patient_eligibility(df: pd.DataFrame) -> pd.DataFrame:
+#     if df.empty:
+#         return df
+#     patient_summary = (
+#         df.groupby("pat_ID", as_index=False)
+#         .agg(
+#             max_followup=("Visit_months_from_diagnosis", "max"),
+#             latest_year=("Year_visit", "max"),
+#         )
+#     )
+#     eligible_ids = patient_summary[
+#         (patient_summary["max_followup"] >= 24.0) & (patient_summary["latest_year"] >= 2010)
+#     ]["pat_ID"]
+#     return df[df["pat_ID"].isin(set(eligible_ids.tolist()))].copy()
 
 
 def derive_d2t_ra_visit_flags(
     df: pd.DataFrame,
     *,
     event_definition: str = DEFAULT_EVENT_DEFINITION,
-    apply_patient_eligibility: bool = True,
+    # apply_patient_eligibility: bool = True,
     exclude_prevalent_at_baseline: bool = False,
 ) -> pd.DataFrame:
     """Return visit-level D2T RA criteria and event flags for a versioned definition."""
     config = get_d2t_definition_config(event_definition)
-    ordered = _normalize_year_floor(df)
-    if apply_patient_eligibility:
-        ordered = _apply_patient_eligibility(ordered)
+    # Flags are computed on the full visit history (as in the local analysis)
+    ordered = df.sort_values(["pat_ID", "Visit_months_from_diagnosis"]).copy()
+    # if apply_patient_eligibility:
+    #     ordered = _apply_patient_eligibility(ordered)
     if ordered.empty:
         return ordered
 
@@ -212,15 +221,18 @@ def derive_d2t_ra_visit_flags(
         ordered["Visit_months_from_diagnosis"] - ordered["last_dmard_start_month"]
     )
     ordered["rolling_avg_DAS28"] = (
-        ordered.groupby("pat_ID")["DAS28"].rolling(window=2, min_periods=1).mean().reset_index(level=0, drop=True)
+        ordered.groupby("pat_ID")["DAS28"].rolling(window=2, min_periods=2).mean().reset_index(level=0, drop=True)  # Rolling Mean is over 2 visits. Same for CRP.
     )
     ordered["rolling_avg_CRP"] = (
-        ordered.groupby("pat_ID")["CRP"].rolling(window=2, min_periods=1).mean().reset_index(level=0, drop=True)
+        ordered.groupby("pat_ID")["CRP"].rolling(window=2, min_periods=2).mean().reset_index(level=0, drop=True)
     )
 
-    criterion1 = ordered["cum_ever_csDMARD"] & (ordered["cum_unique_btsDMARD"] >= config.min_moa)
+    n_moa = ordered["cum_unique_btsDMARD"]
+    criterion1 = ordered["cum_ever_csDMARD"] & (n_moa >= config.min_moa)
     if config.require_time_since_last_dmard:
-        criterion1 = criterion1 & (ordered["months_since_last_dmard"] >= 6.0)
+        # Local: 6 months on the latest drug only matters with exactly min_moa drugs (2)
+        # with more than min_moa, criterion 1 is met immediately.
+        criterion1 = criterion1 & ((ordered["months_since_last_dmard"] >= 6.0) | (n_moa > config.min_moa))
     if config.within_years_from_diagnosis is not None:
         criterion1 = criterion1 & (
             ordered["Visit_months_from_diagnosis"] <= float(config.within_years_from_diagnosis * 12)
@@ -229,19 +241,20 @@ def derive_d2t_ra_visit_flags(
     activity_eligible = (ordered["months_since_last_dmard"] >= 6.0) if config.activity_after_dmard_window else True
     if config.require_activity:
         if config.use_rolling_activity:
-            das28_active = ordered["rolling_avg_DAS28"] >= 3.2
-            crp_active = ordered["rolling_avg_CRP"] > 10.0 if config.include_crp_activity else False
+            das28_active = ordered["rolling_avg_DAS28"] > 3.2
+            crp_active = ordered["rolling_avg_CRP"] > 1.0 if config.include_crp_activity else False
         else:
-            das28_active = ordered["DAS28"] >= 3.2
-            crp_active = ordered["CRP"] > 10.0 if config.include_crp_activity else False
-        criterion2 = activity_eligible & (das28_active | crp_active)
+            das28_active = ordered["DAS28"] > 3.2
+            crp_active = ordered["CRP"] > 1.0 if config.include_crp_activity else False
+        changed_moa = n_moa > ordered.groupby("pat_ID")["cum_unique_btsDMARD"].shift(1).fillna(0)
+        criterion2 = activity_eligible & (das28_active | crp_active | (changed_moa & (n_moa > 1)))
     else:
         criterion2 = pd.Series(True, index=ordered.index)
 
     if config.require_problematic:
         criterion3 = (
-            (_safe_numeric(ordered["Pat_global"]) >= config.vas_threshold)
-            | (_safe_numeric(ordered["Ph_global"]) >= config.vas_threshold)
+            (_safe_numeric(ordered["Pat_global"]) > config.vas_threshold)
+            | (_safe_numeric(ordered["Ph_global"]) > config.vas_threshold)
         )
     else:
         criterion3 = pd.Series(True, index=ordered.index)
@@ -251,6 +264,7 @@ def derive_d2t_ra_visit_flags(
     ordered["D2T_crit3"] = criterion3.astype(bool)
     ordered["D2T_RA"] = ordered["D2T_crit1"] & ordered["D2T_crit2"] & ordered["D2T_crit3"]
     ordered["event_definition"] = config.identifier
+    ordered = _normalize_year_floor(ordered)   # drop visits before 2006 only now
 
     if exclude_prevalent_at_baseline:
         baseline_moa = ordered.groupby("pat_ID")["cum_unique_btsDMARD"].transform("first")
@@ -267,7 +281,7 @@ def _build_patient_summary_for_filtering(
     tagged = derive_d2t_ra_visit_flags(
         df,
         event_definition=event_definition,
-        apply_patient_eligibility=False,
+        # apply_patient_eligibility=False,
         exclude_prevalent_at_baseline=False,
     )
     rows: list[dict[str, Any]] = []
@@ -366,7 +380,7 @@ def strata_fit_data_to_km_input(
     tagged = derive_d2t_ra_visit_flags(
         df,
         event_definition=event_definition,
-        apply_patient_eligibility=True,
+        # apply_patient_eligibility=True,
         exclude_prevalent_at_baseline=True,
     )
     if tagged.empty:
@@ -494,7 +508,8 @@ def compute_d2t_characteristics_components(
     """Return aggregate-only components at each patient's first D2T visit."""
     tagged = derive_d2t_ra_visit_flags(
         df, event_definition=event_definition,
-        apply_patient_eligibility=True, exclude_prevalent_at_baseline=False,
+        # apply_patient_eligibility=True,
+        exclude_prevalent_at_baseline=False,
     )
     first = (tagged[tagged["D2T_RA"]]
              .sort_values(["pat_ID", "Visit_months_from_diagnosis"])
@@ -522,7 +537,7 @@ def compute_d2t_prevalence_by_year(
     tagged = derive_d2t_ra_visit_flags(
         df,
         event_definition=event_definition,
-        apply_patient_eligibility=True,
+        # apply_patient_eligibility=True,
         exclude_prevalent_at_baseline=False,
     )
     if tagged.empty:
