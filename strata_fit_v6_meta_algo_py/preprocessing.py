@@ -36,7 +36,6 @@ class D2TDefinitionConfig:
     require_problematic: bool = True
     vas_threshold: float = 50.0
     require_time_since_last_dmard: bool = True
-    activity_after_dmard_window: bool = False # no waiting window in local
     within_years_from_diagnosis: int | None = None
 
 
@@ -50,20 +49,20 @@ DEFINITION_SENSITIVITY_CONFIGS: tuple[D2TDefinitionConfig, ...] = (
     ),
     D2TDefinitionConfig(
         identifier="d2t_candidate_2_moa2_das28",
-        label=">=2 MOAs + DAS28 >= 3.2",
+        label=">=2 MOAs + DAS28 > 3.2",
         use_rolling_activity=False,
         include_crp_activity=False,
         require_problematic=False,
     ),
     D2TDefinitionConfig(
         identifier="d2t_candidate_3_moa2_das28_vas50",
-        label=">=2 MOAs + DAS28 >= 3.2 + VAS >= 50",
+        label=">=2 MOAs + DAS28 > 3.2 + VAS > 50",
         use_rolling_activity=False,
         include_crp_activity=False,
     ),
     D2TDefinitionConfig(
         identifier=DEFAULT_EVENT_DEFINITION,
-        label="Selected definition: >=2 MOAs + rolling DAS28/CRP + VAS >= 50",
+        label="Selected definition: >=2 MOAs + rolling DAS28/CRP + VAS > 50",
     ),
     D2TDefinitionConfig(
         identifier="d2t_candidate_5_moa2_rolling_vas75",
@@ -237,8 +236,6 @@ def derive_d2t_ra_visit_flags(
         criterion1 = criterion1 & (
             ordered["Visit_months_from_diagnosis"] <= float(config.within_years_from_diagnosis * 12)
         )
-
-    activity_eligible = (ordered["months_since_last_dmard"] >= 6.0) if config.activity_after_dmard_window else True
     if config.require_activity:
         if config.use_rolling_activity:
             das28_active = ordered["rolling_avg_DAS28"] > 3.2
@@ -247,7 +244,7 @@ def derive_d2t_ra_visit_flags(
             das28_active = ordered["DAS28"] > 3.2
             crp_active = ordered["CRP"] > 1.0 if config.include_crp_activity else False
         changed_moa = n_moa > ordered.groupby("pat_ID")["cum_unique_btsDMARD"].shift(1).fillna(0)
-        criterion2 = activity_eligible & (das28_active | crp_active | (changed_moa & (n_moa > 1)))
+        criterion2 = das28_active | crp_active | (changed_moa & (n_moa > 1))
     else:
         criterion2 = pd.Series(True, index=ordered.index)
 
