@@ -80,6 +80,68 @@ Focused verification:
   tests/test_mock_pipeline.py -q
 ```
 
+## MICE imputation
+
+`imputation_strategy="mice"` runs federated, deterministic MICE (pooled OLS/ridge per
+feature). It follows sklearn's `IterativeImputer(imputation_order="ascending")`:
+
+- **Round 0:** each node sends per-column sums and counts. The central step computes the
+  global means (initial fill) and the visiting order (fewest missing values first).
+- **Then, for each of `imputation_max_iter` iterations (default 5), for each column:** each
+  node rebuilds its working matrix by replaying every regression fitted so far, then sends
+  X'X and X'y for that column. The central step solves one pooled regression and appends
+  it to `estimate_sequence`.
+- **Imputation:** downstream steps replay the full `estimate_sequence` once.
+
+This is `1 + imputation_max_iter × len(columns)` partial rounds. Only sufficient statistics
+and coefficients leave a node. The implementation is copied from
+`strata-fit-v6-imputation-py` (`MiceImputer`, see `IMPUTATION_CHANGES.md`).
+
+```python
+"imputation_strategy": "mice",
+"imputation_max_iter": 5,
+```
+
+### Federated vs. local MICE comparison script
+
+Ported from `strata-fit-v6-imputation-py` (Josef Baliko). Sites can use it to test the
+federated imputation on their own data. Nothing leaves the machine.
+
+The script hides 20% of your observed values, imputes them, and compares the errors with
+the true values. It does this for local sklearn MICE (pooled) and for the federated MICE,
+with your data split into simulated sites inside one process. If
+`strata-fit-v6-imputation-py` is installed, its federated MICE is reported as well.
+
+```bash
+python tests/compare_fed_vs_local_mice.py \
+  --csv path/to/your_data.csv \
+  --cols DAS28 CRP ESR SJC28 TJC28 \
+  --aux Age_diagnosis Sex \
+  --n-sites 3 --max-iter 5 --group-col pat_ID --reps 5 [--diagnose]
+```
+
+- `--cols`: numeric columns to impute and score.
+- `--aux`: predictor-only columns. Every method uses them, but they are never masked or scored.
+- `--n-sites`: number of simulated sites (at least 3).
+- `--max-iter`: number of iterations, for both the federated and the local method.
+- `--reps`: number of runs. The report shows the mean.
+- `--group-col`: keeps all rows of one patient in the same simulated site (or use a centre column).
+- `--diagnose`: adds a column profile, collinearity, coefficients and an iteration sweep.
+- `--out-dir`: where the summary CSVs and `report.txt` go (default `fed_vs_local_out/`).
+  These are aggregate statistics only.
+
+Interpreting the output (all nRMSE values are the error on the hidden cells divided by
+the column's SD; lower is better):
+
+| Line | How to read it |
+|---|---|
+| mean baseline | Reference point, about 1.0. Any real imputer should score clearly below it. |
+| local sklearn (BR / OLS) | Best case: sklearn MICE on the pooled data. |
+| federated meta-algo | This repo. It should match local OLS (100 % recovered). |
+| federated standalone | `strata-fit-v6-imputation-py`. Shows n/a if that repo is not installed. |
+| distance to local MICE | 0 means the imputed values are identical to local OLS MICE. |
+| split invariance | Must be about 0. Otherwise the result depends on how the data is split, and the federation is wrong. |
+
 ## Validation Harness
 
 Validation artifacts are written under `ARTIFACTS/validation/`; security artifacts are written under `ARTIFACTS/security/`.
