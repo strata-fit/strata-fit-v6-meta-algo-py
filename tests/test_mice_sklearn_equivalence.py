@@ -1,4 +1,5 @@
-"""Ported from strata-fit-v6-imputation-py test/test_mice_sklearn_equivalence.py.
+"""Ported from strata-fit-v6-imputation-py test/test_mice_sklearn_equivalence.py
+(main @ 09de91d, PR #11).
 
 Lines marked META-ALGO differ from the original.
 """

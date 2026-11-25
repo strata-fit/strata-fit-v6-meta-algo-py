@@ -1,6 +1,7 @@
 """Compare local sklearn MICE vs. federated MICE (meta-algo repo, optionally the standalone repo).
 
-Ported from strata-fit-v6-imputation-py test/compare_fed_vs_local_mice.py (Josef Baliko).
+Ported from strata-fit-v6-imputation-py test/compare_fed_vs_local_mice.py (Josef Baliko;
+main @ 09de91d, PR #11).
 Lines marked META-ALGO differ from the original: the meta-algo MICE is now the iterative
 version (same algorithm as the standalone repo), so it is the primary federated method here
 and the standalone repo is the optional comparison.

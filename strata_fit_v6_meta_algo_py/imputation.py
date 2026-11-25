@@ -230,7 +230,7 @@ class ConstantImputer(ImputationStrategy):
 class MiceImputer(ImputationStrategy):
     """
     Copied from strata-fit-v6-imputation-py
-    (fix/change-imputation-loop-and-column-order, commit e675e02).
+    (main @ 09de91d, PR #11 "Fix/change imputation loop and column order").
     Only lines marked ``META-ALGO`` differ from the original.
 
     Federated deterministic MICE (pooled OLS/ridge per feature) that follows

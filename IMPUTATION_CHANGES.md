@@ -40,6 +40,10 @@ across sites. It also contains everything in Chiara's branch (the replay and sup
 older models), plus a faster numpy implementation, smaller per-round payloads and an
 automated test against sklearn. Chiara's branch is superseded.
 
+Josef's branch was merged into `strata-fit-v6-imputation-py` `main` on 2026-11-24 as
+`09de91d` (PR #11, squash merge, same files as the branch head `e675e02`). All code
+on this branch is taken from that `main` commit.
+
 ## 2. What was wrong in the meta-algo
 
 `strata_fit_v6_meta_algo_py/imputation.py` carried an older, separate copy of MICE:
@@ -56,7 +60,7 @@ automated test against sklearn. Chiara's branch is superseded.
 
 | File | Change |
 |---|---|
-| `imputation.py` | **`MiceImputer` copied verbatim from Josef's `mice.py` (commit `e675e02`).** The only code change, marked `META-ALGO`: when `compute()` gets no `target_feat_idx`, it returns the round-0 sums/counts (`get_local_sums`) instead of raising, so no extra partial method or entry point is needed. Also copied from Josef's `methods.py`: `get_local_sums`, `_compute_global_means`, and the MICE central loop as `fit_mice_model(run_partial, columns, max_iter)`. In that loop the vantage6 task call is replaced by a callable, so it runs with the meta-algo `TaskRunner`, the in-process client and the tests. Unused `IterativeImputer`/`BayesianRidge` imports removed. Mean/median/constant untouched. |
+| `imputation.py` | **`MiceImputer` copied verbatim from Josef's `mice.py` (imputation repo `main` @ `09de91d`, PR #11).** The only code change, marked `META-ALGO`: when `compute()` gets no `target_feat_idx`, it returns the round-0 sums/counts (`get_local_sums`) instead of raising, so no extra partial method or entry point is needed. Also copied from Josef's `methods.py`: `get_local_sums`, `_compute_global_means`, and the MICE central loop as `fit_mice_model(run_partial, columns, max_iter)`. In that loop the vantage6 task call is replaced by a callable, so it runs with the meta-algo `TaskRunner`, the in-process client and the tests. Unused `IterativeImputer`/`BayesianRidge` imports removed. Mean/median/constant untouched. |
 | `contracts.py` | `ImputationComputePartialInput.global_state: Optional[dict]` (MICE chain state + `target_feat_idx`). `MetaCentralInput.imputation_max_iter: int = 5`. |
 | `methods.py` | `imputation_compute_partial_handler` passes `global_state` to `compute()`. `central_handler`: if strategy is MICE, call `fit_mice_model` (with `runner.run` on `imputation_compute_partial`); other strategies keep the single-round path. Downstream steps (linear, Cox, KM, survival bundle) are unchanged: they still receive `global_metrics` = the model config. |
 | `partial.py` | `imputation_compute_partial[_frame]` accept and forward `global_state` (also added to `named_arguments`). |
