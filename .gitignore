@@ -111,3 +111,6 @@ venv.bak/
 .psi-ignore
 report.md
 ARTIFACTS/**/report.*
+
+# output of tests/compare_fed_vs_local_mice.py
+fed_vs_local_out/

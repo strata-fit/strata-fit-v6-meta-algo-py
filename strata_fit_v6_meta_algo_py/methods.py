@@ -88,7 +88,7 @@ def _bootstrap_validator_config_path() -> None:
 
 _bootstrap_validator_config_path()
 
-from .imputation import ImputationStrategyEnum, STRATEGY_REGISTRY
+from .imputation import ImputationStrategyEnum, STRATEGY_REGISTRY, fit_mice_model
 from .log import info, warn
 from .preprocessing import (
     DEFAULT_EVENT_DEFINITION,
@@ -335,7 +335,7 @@ def imputation_compute_partial_handler(
     strategy = _coerce_strategy(data.imputation_strategy)
     imputer_cls = STRATEGY_REGISTRY[strategy]
     imputer = imputer_cls()
-    result = imputer.compute(df, data.columns)
+    result = imputer.compute(df, data.columns, global_state=data.global_state)
     if isinstance(result, dict):
         return result
     if hasattr(result, "to_dict"):
@@ -1754,18 +1754,33 @@ def central_handler(
             org_ids,
         )
 
-    node_metrics = runner.run(
-        impute_step,
-        {
-            "columns": data.columns,
-            "imputation_strategy": strategy,
-        },
-        org_ids,
-    )
-
-    imputer_cls = STRATEGY_REGISTRY[strategy]
-    imputer = imputer_cls()
-    global_metrics = imputer.aggregate(node_metrics=node_metrics, columns=data.columns)
+    if strategy == ImputationStrategyEnum.MICE_IMPUTER:
+        # Iterative federated MICE: 1 + imputation_max_iter * len(columns) rounds.
+        global_metrics = fit_mice_model(
+            lambda global_state: runner.run(
+                impute_step,
+                {
+                    "columns": data.columns,
+                    "imputation_strategy": strategy,
+                    "global_state": global_state,
+                },
+                org_ids,
+            ),
+            columns=data.columns,
+            max_iter=data.imputation_max_iter,
+        )
+    else:
+        node_metrics = runner.run(
+            impute_step,
+            {
+                "columns": data.columns,
+                "imputation_strategy": strategy,
+            },
+            org_ids,
+        )
+        imputer_cls = STRATEGY_REGISTRY[strategy]
+        imputer = imputer_cls()
+        global_metrics = imputer.aggregate(node_metrics=node_metrics, columns=data.columns)
     results["imputation_metrics"] = global_metrics
 
     if data.final_model == FinalModelEnum.SKLEARN_LINEAR:

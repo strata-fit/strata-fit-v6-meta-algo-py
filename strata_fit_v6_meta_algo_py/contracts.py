@@ -69,6 +69,8 @@ class MetaCentralInput(BaseModel):
     model_name: Optional[str] = None
     run_validation: bool = True
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    # MICE only: number of chained-equation iterations (sklearn ``max_iter``).
+    imputation_max_iter: int = Field(default=5, ge=1)
     final_model: FinalModelEnum = FinalModelEnum.SKLEARN_LINEAR
     final_model_config: Dict[str, Any] = Field(default_factory=dict)
 
@@ -95,6 +97,9 @@ class ValidatePartialOutput(BaseModel):
 class ImputationComputePartialInput(BaseModel):
     columns: List[str] = Field(min_length=1)
     imputation_strategy: ImputationStrategyEnum = ImputationStrategyEnum.MEAN_IMPUTER
+    # MICE only: round-0 when empty/None, otherwise the current chain state plus
+    # ``target_feat_idx`` (see imputation.fit_mice_model).
+    global_state: Optional[Dict[str, Any]] = None
 
 
 class ImputationComputePartialOutput(RootModel[Dict[str, Any]]):

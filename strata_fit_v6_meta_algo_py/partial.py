@@ -33,6 +33,7 @@ def imputation_compute_partial_frame(
     *,
     columns: List[str],
     imputation_strategy: str = "mean",
+    global_state: Dict[str, Any] | None = None,
     client: Any = None,
 ) -> Dict[str, Any]:
     return run_partial_method(
@@ -41,6 +42,7 @@ def imputation_compute_partial_frame(
         raw_input={
             "columns": columns,
             "imputation_strategy": imputation_strategy,
+            "global_state": global_state,
         },
         client=client,
     )
@@ -376,12 +378,13 @@ def validate_partial(
 @run_context(
     input_uris="dataset_path",
     output_uris="output_path",
-    named_arguments=["columns", "imputation_strategy"],
+    named_arguments=["columns", "imputation_strategy", "global_state"],
 )
 def imputation_compute_partial(
     dataset_path: str | Path,
     columns: List[str],
     imputation_strategy: str = "mean",
+    global_state: Dict[str, Any] | None = None,
     output_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     result = normalize_payload(
@@ -389,6 +392,7 @@ def imputation_compute_partial(
             _load_dataframe(dataset_path),
             columns=columns,
             imputation_strategy=imputation_strategy,
+            global_state=global_state,
         )
     )
     write_output(output_path, result)
